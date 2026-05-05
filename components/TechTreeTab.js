@@ -1,0 +1,160 @@
+'use client';
+import { useEffect, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Lock, Unlock, Crown, GitBranch, Zap, ShieldCheck, Cpu, TrendingUp, Truck } from 'lucide-react';
+import { toast } from 'sonner';
+
+const api = async (path, opts = {}) => {
+  const res = await fetch('/api/' + path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Error');
+  return data;
+};
+
+const BRANCH_META = {
+  FINANCIERA: { label: 'Ingeniería Financiera', Icon: TrendingUp, accent: 'cyan', accentBg: 'bg-cyan-500/10', accentBorder: 'border-cyan-500/30', accentText: 'text-cyan-400', stripe: 'bg-cyan-400' },
+  URBANO: { label: 'Desarrollo Urbano', Icon: ShieldCheck, accent: 'lime', accentBg: 'bg-lime-500/10', accentBorder: 'border-lime-500/30', accentText: 'text-lime-400', stripe: 'bg-lime-400' },
+  LOGISTICA: { label: 'Logística', Icon: Truck, accent: 'orange', accentBg: 'bg-orange-500/10', accentBorder: 'border-orange-500/30', accentText: 'text-orange-400', stripe: 'bg-orange-400' },
+};
+
+export default function TechTreeTab({ player, ic, onChange }) {
+  const [tree, setTree] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = async () => {
+    try {
+      const data = await api('tech/tree/' + player.id);
+      setTree(data);
+    } catch (e) { toast.error(e.message); }
+  };
+  useEffect(() => { load(); }, [player.id]);
+
+  const unlock = async (nodeId) => {
+    if (!confirm('Desbloquear este nodo?')) return;
+    setLoading(true);
+    try {
+      const res = await api('tech/unlock', { method: 'POST', body: JSON.stringify({ player_id: player.id, node_id: nodeId }) });
+      toast.success(res.status === 'PATENT' ? 'Patente adquirida' : 'Open Source desbloqueado');
+      await load();
+      onChange?.();
+    } catch (e) { toast.error(e.message); } finally { setLoading(false); }
+  };
+
+  if (!tree) return <div className="text-zinc-500 text-sm">Cargando árbol tecnológico...</div>;
+
+  const branches = ['FINANCIERA', 'URBANO', 'LOGISTICA'];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-orange-500/10 border border-orange-500/30 rounded-full">
+            <Zap className="h-4 w-4 text-orange-400" />
+            <span className="font-mono text-sm font-bold text-orange-400">{Math.floor(ic).toLocaleString('es-AR')} IC</span>
+          </div>
+          <div className="text-xs font-mono uppercase text-zinc-500">Capital Intelectual disponible</div>
+        </div>
+        <div className="text-[10px] font-mono uppercase text-zinc-500">Patente exclusiva por 10 turnos · luego Open Source 25%</div>
+      </div>
+
+      <div className="grid lg:grid-cols-3 gap-4">
+        {branches.map(branch => {
+          const meta = BRANCH_META[branch];
+          const nodes = tree.nodes.filter(n => n.branch === branch).sort((a, b) => a.tier - b.tier);
+          return (
+            <Card key={branch} className={`bg-zinc-950/80 backdrop-blur ${meta.accentBorder}`}>
+              <CardHeader>
+                <CardTitle className={`${meta.accentText} font-mono uppercase text-sm flex items-center gap-2`}>
+                  <meta.Icon className="h-4 w-4" /> {meta.label}
+                </CardTitle>
+                <CardDescription className="text-zinc-500 text-xs">{nodes.length} nodos · prerequisito en cadena</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {nodes.map((n, i) => (
+                  <NodeCard key={n.id} node={n} branchMeta={meta} ic={ic} onUnlock={() => unlock(n.id)} loading={loading} isLast={i === nodes.length - 1} />
+                ))}
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function NodeCard({ node, branchMeta, ic, onUnlock, loading, isLast }) {
+  const canAfford = ic >= node.effective_cost;
+  const isMine = node.status === 'PATENT' || node.status === 'OPEN_SOURCE';
+  const isLocked = node.status === 'LOCKED';
+  const blockedByOther = node.status === 'PATENTED_BY_OTHER';
+  const isAvailable = node.status === 'AVAILABLE' || node.status === 'AVAILABLE_OS';
+
+  const statusBadge = {
+    PATENT: { label: 'Tu Patente', cls: 'bg-orange-500/30 text-orange-200', Icon: Crown },
+    OPEN_SOURCE: { label: 'Open Source', cls: 'bg-cyan-500/30 text-cyan-200', Icon: GitBranch },
+    LOCKED: { label: 'Bloqueado', cls: 'bg-zinc-800 text-zinc-500', Icon: Lock },
+    PATENTED_BY_OTHER: { label: 'Patente ajena', cls: 'bg-red-500/20 text-red-300', Icon: Lock },
+    AVAILABLE: { label: 'Disponible', cls: 'bg-lime-500/20 text-lime-300', Icon: Unlock },
+    AVAILABLE_OS: { label: 'Open Source 25%', cls: 'bg-cyan-500/20 text-cyan-300', Icon: GitBranch },
+  }[node.status];
+  const SBI = statusBadge?.Icon || Lock;
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={`relative bg-zinc-900/40 border rounded-lg p-3 ${
+        isMine ? branchMeta.accentBorder + ' ' + branchMeta.accentBg : isLocked || blockedByOther ? 'border-zinc-800 opacity-60' : 'border-zinc-800'
+      }`}
+    >
+      <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-lg ${
+        isMine ? branchMeta.stripe : isLocked || blockedByOther ? 'bg-zinc-700' : 'bg-zinc-600'
+      }`} />
+      <div className="pl-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+          <div className="flex items-center gap-2">
+            <Badge className={`bg-zinc-800 text-zinc-400 border-0 text-[9px] font-mono px-1.5 py-0`}>T{node.tier}</Badge>
+            <span className="font-bold text-sm text-white">{node.name}</span>
+          </div>
+          <Badge className={`${statusBadge.cls} border-0 font-mono text-[9px] px-1.5 py-0`}>
+            <SBI className="h-2.5 w-2.5 mr-1" /> {statusBadge.label}
+          </Badge>
+        </div>
+        <div className="text-[11px] text-zinc-400 mb-2 leading-snug">{node.description}</div>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2 text-[11px] font-mono">
+            {!isMine && (
+              <span className="text-orange-400 font-bold">{node.effective_cost.toLocaleString('es-AR')} IC</span>
+            )}
+            {node.status === 'AVAILABLE_OS' && <span className="text-zinc-500 line-through">{node.base_cost.toLocaleString('es-AR')}</span>}
+            {node.status === 'PATENT' && node.turns_to_open_source != null && (
+              <span className="text-orange-300/80">Open Source en {node.turns_to_open_source} turnos</span>
+            )}
+            {node.status === 'PATENTED_BY_OTHER' && node.turns_to_open_source != null && (
+              <span className="text-red-300/80">Open en {node.turns_to_open_source} t.</span>
+            )}
+            {node.global_holders > 0 && <span className="text-zinc-500">· {node.global_holders} holder{node.global_holders > 1 ? 's' : ''}</span>}
+          </div>
+          {isAvailable && (
+            <Button
+              size="sm"
+              onClick={onUnlock}
+              disabled={loading || !canAfford}
+              className={`h-7 text-[11px] px-3 font-bold uppercase ${canAfford ? branchMeta.stripe.replace('bg-', 'bg-') + ' hover:opacity-90 text-black' : 'bg-zinc-800 text-zinc-500'}`}
+            >
+              {canAfford ? 'Desbloquear' : 'Sin IC'}
+            </Button>
+          )}
+          {blockedByOther && <span className="text-[10px] text-red-400/80 italic">Esperá Open Source</span>}
+        </div>
+        {!isLast && (
+          <div className="absolute -bottom-2 left-1/2 w-px h-2 bg-zinc-700" />
+        )}
+      </div>
+    </motion.div>
+  );
+}

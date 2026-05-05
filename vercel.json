@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/resolve-and-notify",
+      "schedule": "0 3 * * *"
+    }
+  ]
+}
