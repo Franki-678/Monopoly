@@ -19,7 +19,7 @@ async function route(request, method, path) {
   if (p === 'reset' && method === 'POST') {
     const body = await request.json().catch(() => ({}));
     if (body.secret !== process.env.ADMIN_SECRET) return err('Secret inválido', 403);
-    await sql`DROP TABLE IF EXISTS tech_unlocks, tech_nodes, alliances, daily_rolls, turn_log, transactions, orders, shareholdings, corporations, game_state, players CASCADE`;
+    await sql`DROP TABLE IF EXISTS tech_unlocks, tech_nodes, alliances, daily_rolls, turn_log, transactions, orders, shareholdings, corporations, bounty_contracts, casino_bets, nissai_orders, global_achievements, game_state, players CASCADE`;
     await createSchema();
     const seed = await seedIfEmpty();
     return json({ ok: true, reset: true, seed });
@@ -36,14 +36,14 @@ async function route(request, method, path) {
 
   // --- GAME STATE ---
   if (p === 'game/state' && method === 'GET') {
-    const [state] = await sql`SELECT current_turn, locked FROM game_state WHERE id = 1`;
-    return json(state || { current_turn: 1, locked: false });
+    const [state] = await sql`SELECT current_turn, locked, COALESCE(state_treasury, 0) AS state_treasury, COALESCE(nissai_market_level, 1) AS nissai_market_level FROM game_state WHERE id = 1`;
+    return json(state || { current_turn: 1, locked: false, state_treasury: 0, nissai_market_level: 1 });
   }
 
   // --- DASHBOARD ---
   if (p.startsWith('dashboard/') && method === 'GET') {
     const playerId = p.split('/')[1];
-    const [player] = await sql`SELECT id, username, liquid_cash, intellectual_capital, bankrupt, tax_exempt_turns, is_admin, avatar_color, player_role, board_position FROM players WHERE id = ${playerId}`;
+    const [player] = await sql`SELECT id, username, liquid_cash, intellectual_capital, bankrupt, tax_exempt_turns, is_admin, avatar_color, player_role, board_position, COALESCE(total_ic_spent, 0) AS total_ic_spent FROM players WHERE id = ${playerId}`;
     if (!player) return err('Jugador no encontrado', 404);
 
     const turn = await getCurrentTurn();
@@ -97,7 +97,7 @@ async function route(request, method, path) {
   if (p === 'market' && method === 'GET') {
     const rows = await sql`
       SELECT c.id, c.name, c.district, c.tagline, c.fair_market_value, c.base_income, c.total_shares,
-        c.board_position, c.ceo_player_id,
+        c.board_position, c.ceo_player_id, c.required_level,
         (SELECT username FROM players WHERE id = c.ceo_player_id) AS ceo_name,
         COALESCE((SELECT SUM(shares) FROM shareholdings WHERE corporation_id = c.id), 0)::int AS owned_shares
       FROM corporations c
@@ -217,10 +217,17 @@ async function route(request, method, path) {
     if (isBen && !globalState?.is_os) cost = node.base_cost; // full cost for BEN patent bypass
     if (isEconomist) cost = Math.round(cost * 1.20); // ECONOMIST pays +20% (bureaucracy tax)
 
+    // Check required_role for personal branch nodes
+    if (node.required_role && node.required_role !== player.player_role) {
+      return err('Este nodo es exclusivo para el rol ' + node.required_role);
+    }
+
     if (Number(player.intellectual_capital) < cost) return err('IC insuficiente: necesitás ' + cost + ', tenés ' + Math.floor(player.intellectual_capital));
     const turn = await getCurrentTurn();
-    await sql`UPDATE players SET intellectual_capital = intellectual_capital - ${cost} WHERE id = ${player_id}`;
-    const newStatus = isOpenSource ? 'OPEN_SOURCE' : 'PATENT';
+    // Personal branch nodes are always PATENT (never expire)
+    const isPersonalNode = node_id.match(/^(ds|ec|ps|se|me)-/);
+    const newStatus = (isPersonalNode || !isOpenSource) ? 'PATENT' : 'OPEN_SOURCE';
+    await sql`UPDATE players SET intellectual_capital = intellectual_capital - ${cost}, total_ic_spent = COALESCE(total_ic_spent, 0) + ${cost} WHERE id = ${player_id}`;
     await sql`INSERT INTO tech_unlocks (player_id, node_id, unlocked_at_turn, cost_paid, status) VALUES (${player_id}, ${node_id}, ${turn}, ${cost}, ${newStatus})`;
     await sql`INSERT INTO transactions (turn_number, player_id, tx_type, amount, description) VALUES (${turn}, ${player_id}, 'TECH_UNLOCK', 0, ${'Desbloqueado: ' + node.name + ' (' + (newStatus === 'PATENT' ? 'Patente ' : 'Open Source ') + cost + ' IC)'})`;
 

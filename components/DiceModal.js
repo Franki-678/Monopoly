@@ -19,7 +19,11 @@ const LANDING_INFO = {
   5:  { emoji: '⚠️', desc: '¡Prendas! Preparate.' },
   10: { emoji: '🛋️', desc: 'El Psicólogo. Te cuesta $200.' },
   15: { emoji: '⚠️', desc: '¡Prendas! Preparate.' },
+  20: { emoji: '🏛️', desc: 'El Estado. Zona avanzada.' },
+  25: { emoji: '⚠️', desc: '¡Prendas! Preparate.' },
+  30: { emoji: '🥷', desc: 'Mercado Negro. Nissai descuento.' },
 };
+const BOARD_SIZE = 32;
 
 const api = async (path, opts = {}) => {
   const res = await fetch('/api/' + path, { headers: { 'Content-Type': 'application/json' }, ...opts });
@@ -39,7 +43,7 @@ export default function DiceModal({ playerId, turn, playerPosition = 0, onRollCo
     api('dice/status/' + playerId).then(d => {
       if (d.roll) {
         const roll    = d.roll;
-        const landing = (playerPosition + roll) % 20;
+        const landing = (playerPosition + roll) % BOARD_SIZE;
         setRolledValue(roll);
         setLanding(landing);
         setAlready(true);
@@ -57,7 +61,7 @@ export default function DiceModal({ playerId, turn, playerPosition = 0, onRollCo
       const res     = await api('dice/roll', { method: 'POST', body: JSON.stringify({ player_id: playerId }) });
       await new Promise(r => setTimeout(r, 1400));
       clearInterval(spin);
-      const landing = (playerPosition + res.roll) % 20;
+      const landing = (playerPosition + res.roll) % BOARD_SIZE;
       setRolledValue(res.roll);
       setLanding(landing);
       onRollComplete?.({ roll: res.roll, landing });

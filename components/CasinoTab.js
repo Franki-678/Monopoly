@@ -18,11 +18,12 @@ const api = async (path, opts = {}) => {
 
 const fmt = (n) => '$' + Number(n || 0).toLocaleString('es-AR', { maximumFractionDigits: 0 });
 
+// Mission 5 rebalance: 60% LOSE, 18% WIN, 18% SMALL_WIN, 4% JACKPOT
 const OUTCOMES = [
   { id: 'JACKPOT',   label: 'JACKPOT',     emoji: '💰', mult: '×6.0',  pct: '4%',  color: 'text-yellow-300', border: 'border-yellow-500/50', bg: 'bg-yellow-500/10' },
-  { id: 'WIN',       label: 'GANASTE',     emoji: '🤑', mult: '×2.5',  pct: '23%', color: 'text-lime-300',   border: 'border-lime-500/50',   bg: 'bg-lime-500/10'   },
-  { id: 'SMALL_WIN', label: 'ALGO ES ALGO',emoji: '🟡', mult: '×1.5',  pct: '23%', color: 'text-cyan-300',   border: 'border-cyan-500/50',   bg: 'bg-cyan-500/10'   },
-  { id: 'LOSE',      label: 'SE FUNDIÓ',   emoji: '💀', mult: '×0',    pct: '50%', color: 'text-red-400',    border: 'border-red-500/50',    bg: 'bg-red-500/10'    },
+  { id: 'WIN',       label: 'GANASTE',     emoji: '🤑', mult: '×2.5',  pct: '18%', color: 'text-lime-300',   border: 'border-lime-500/50',   bg: 'bg-lime-500/10'   },
+  { id: 'SMALL_WIN', label: 'ALGO ES ALGO',emoji: '🟡', mult: '×1.5',  pct: '18%', color: 'text-cyan-300',   border: 'border-cyan-500/50',   bg: 'bg-cyan-500/10'   },
+  { id: 'LOSE',      label: 'SE FUNDIÓ',   emoji: '💀', mult: '×0',    pct: '60%', color: 'text-red-400',    border: 'border-red-500/50',    bg: 'bg-red-500/10'    },
 ];
 
 const RESULT_META = Object.fromEntries(OUTCOMES.map(o => [o.id, o]));

@@ -40,10 +40,32 @@ const api = async (path, opts = {}) => {
 };
 
 const SQUARE_LABELS = {
-  5:  { label: '⚠️ Prendas',   cls: 'text-amber-400' },
-  10: { label: '🛋️ Psicólogo', cls: 'text-pink-400'  },
-  15: { label: '⚠️ Prendas',   cls: 'text-amber-400' },
+  5:  { label: '⚠️ Prendas',       cls: 'text-amber-400'  },
+  10: { label: '🛋️ Psicólogo',     cls: 'text-pink-400'   },
+  15: { label: '⚠️ Prendas',       cls: 'text-amber-400'  },
+  20: { label: '🏛️ El Estado',     cls: 'text-green-400'  },
+  25: { label: '⚠️ Prendas',       cls: 'text-amber-400'  },
+  30: { label: '🥷 Mercado Negro',  cls: 'text-purple-400' },
 };
+
+// Level thresholds (sync with gameLogic.js)
+const LEVEL_THRESHOLDS = [0, 500, 1500, 3000, 6000, 12000, 25000, 50000, 100000, 200000];
+function computeLevel(totalIcSpent) {
+  let level = 1;
+  for (let i = 1; i < LEVEL_THRESHOLDS.length; i++) {
+    if (totalIcSpent >= LEVEL_THRESHOLDS[i]) level = i + 1;
+    else break;
+  }
+  return level;
+}
+function levelProgress(totalIcSpent) {
+  const level = computeLevel(totalIcSpent);
+  if (level >= LEVEL_THRESHOLDS.length) return { level, pct: 100, next: null };
+  const from = LEVEL_THRESHOLDS[level - 1];
+  const to   = LEVEL_THRESHOLDS[level];
+  const pct  = Math.min(100, Math.round(((totalIcSpent - from) / (to - from)) * 100));
+  return { level, pct, next: to - totalIcSpent };
+}
 
 const ROLE_LABELS = {
   DATA_SCIENTIST:   { label: 'Data Scientist',  color: '#a3e635' },
@@ -305,12 +327,35 @@ function Dashboard({ player, dashboard, market, players, state, refresh, logout,
       <div className="flex-1 overflow-y-auto overscroll-contain" style={{ scrollbarWidth: 'thin', scrollbarColor: '#3f3f46 transparent' }}>
         <div className="px-2 py-2 space-y-2">
           {/* KPIs */}
-          <div className="grid grid-cols-4 gap-1.5">
-            <KpiCard label="NW"    value={fmt(netWorth)}                                                         icon={<TrendingUp className="h-3 w-3" />} accent="lime"   />
-            <KpiCard label="Cash"  value={fmt(pData.liquid_cash)}                                                icon={<Wallet     className="h-3 w-3" />} accent="cyan"   />
-            <KpiCard label="IC"    value={Math.round(pData.intellectual_capital).toLocaleString('es-AR') + ' IC'} icon={<Zap       className="h-3 w-3" />} accent="orange" />
-            <KpiCard label="Corps" value={portfolio.length}                                                      icon={<Building2  className="h-3 w-3" />} accent="pink"   />
-          </div>
+          {(() => {
+            const totalIcSpent = Number(pData.total_ic_spent || 0);
+            const { level, pct, next } = levelProgress(totalIcSpent);
+            return (
+              <div className="space-y-1.5">
+                <div className="grid grid-cols-4 gap-1.5">
+                  <KpiCard label="NW"    value={fmt(netWorth)}                                                         icon={<TrendingUp className="h-3 w-3" />} accent="lime"   />
+                  <KpiCard label="Cash"  value={fmt(pData.liquid_cash)}                                                icon={<Wallet     className="h-3 w-3" />} accent="cyan"   />
+                  <KpiCard label="IC"    value={Math.round(pData.intellectual_capital).toLocaleString('es-AR') + ' IC'} icon={<Zap       className="h-3 w-3" />} accent="orange" />
+                  <KpiCard label="Corps" value={portfolio.length}                                                      icon={<Building2  className="h-3 w-3" />} accent="pink"   />
+                </div>
+                {/* Level Bar */}
+                <div className="bg-zinc-950 border border-zinc-900 rounded-lg px-3 py-1.5 flex items-center gap-2">
+                  <div className="shrink-0 w-8 h-8 rounded-full bg-lime-400/15 border border-lime-500/40 flex items-center justify-center">
+                    <span className="text-[11px] font-black text-lime-400">L{level}</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className="text-[9px] font-mono uppercase text-zinc-500">Nivel {level} — {totalIcSpent.toLocaleString('es-AR')} IC gastados</span>
+                      {next !== null && <span className="text-[8px] font-mono text-zinc-600">{next.toLocaleString('es-AR')} IC → L{level + 1}</span>}
+                    </div>
+                    <div className="w-full h-1 bg-zinc-800 rounded-full overflow-hidden">
+                      <div className="h-full bg-lime-400 rounded-full transition-all" style={{ width: pct + '%' }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Chapter 11 */}
           {pData.bankrupt && (
