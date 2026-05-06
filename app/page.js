@@ -5,15 +5,16 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
 import {
-  Loader2, LogOut, Zap, TrendingUp, Wallet, Building2, Crown,
+  Loader2, LogOut, Zap, TrendingUp, TrendingDown, Wallet, Building2, Crown,
   ShoppingCart, History, Flame, Skull, ShieldAlert, Dices,
+  Home, BarChart2, Target, Users, FlaskConical, AlertTriangle,
+  ChevronDown, ChevronRight, Settings,
 } from 'lucide-react';
 import LiveBoard from '@/components/LiveBoard';
 import DiceModal from '@/components/DiceModal';
@@ -25,18 +26,11 @@ import NissaiPanel from '@/components/NissaiPanel';
 import CasinoTab from '@/components/CasinoTab';
 import BountyBoard from '@/components/BountyBoard';
 import SurvivalGuide from '@/components/SurvivalGuide';
+import CorpDetailModal, { corpScore } from '@/components/CorpDetailModal';
 
 // ── Utilidades ────────────────────────────────────────────────────────────────
-const fmt = (n) => {
-  if (n === null || n === undefined || isNaN(n)) return '$0';
-  const num  = Number(n);
-  const sign = num < 0 ? '-' : '';
-  return sign + '$' + Math.abs(num).toLocaleString('es-AR', { maximumFractionDigits: 0 });
-};
-const fmtDec = (n) => {
-  if (n === null || n === undefined || isNaN(n)) return '$0';
-  return '$' + Number(n).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-};
+const fmt    = (n) => { if (n === null || n === undefined || isNaN(n)) return '$0'; const num = Number(n); const sign = num < 0 ? '-' : ''; return sign + '$' + Math.abs(num).toLocaleString('es-AR', { maximumFractionDigits: 0 }); };
+const fmtDec = (n) => { if (n === null || n === undefined || isNaN(n)) return '$0'; return '$' + Number(n).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
 
 const api = async (path, opts = {}) => {
   const res  = await fetch('/api/' + path, { headers: { 'Content-Type': 'application/json' }, ...opts });
@@ -45,11 +39,10 @@ const api = async (path, opts = {}) => {
   return data;
 };
 
-// Casillas especiales (sincronizado con BOARD_SPECIAL_SQUARES del server)
 const SQUARE_LABELS = {
-  5:  { label: '⚠️ Prendas',      cls: 'text-amber-400' },
-  10: { label: '🛋️ Psicólogo',    cls: 'text-pink-400'  },
-  15: { label: '⚠️ Prendas',      cls: 'text-amber-400' },
+  5:  { label: '⚠️ Prendas',   cls: 'text-amber-400' },
+  10: { label: '🛋️ Psicólogo', cls: 'text-pink-400'  },
+  15: { label: '⚠️ Prendas',   cls: 'text-amber-400' },
 };
 
 const ROLE_LABELS = {
@@ -62,18 +55,18 @@ const ROLE_LABELS = {
 
 // ── App root ──────────────────────────────────────────────────────────────────
 function App() {
-  const [player,      setPlayer]      = useState(null);
-  const [initLoading, setInitLoading] = useState(true);
-  const [dashboard,   setDashboard]   = useState(null);
-  const [market,      setMarket]      = useState([]);
-  const [players,     setPlayers]     = useState([]);
-  const [state,       setState]       = useState({ current_turn: 1, locked: false });
-  const [loading,     setLoading]     = useState(false);
-  const [showDice,    setShowDice]    = useState(false);
-  const [flash,       setFlash]       = useState(null);
-  // ── Proyección de dado sobre el tablero (permanente hasta el próximo turno) ──
+  const [player,         setPlayer]         = useState(null);
+  const [initLoading,    setInitLoading]    = useState(true);
+  const [dashboard,      setDashboard]      = useState(null);
+  const [market,         setMarket]         = useState([]);
+  const [players,        setPlayers]        = useState([]);
+  const [state,          setState]          = useState({ current_turn: 1, locked: false });
+  const [loading,        setLoading]        = useState(false);
+  const [showDice,       setShowDice]       = useState(false);
+  const [flash,          setFlash]          = useState(null);
   const [projectedSquare, setProjectedSquare] = useState(null);
-  const prevTurnRef  = useRef(null);
+  const [clickedSquare,  setClickedSquare]  = useState(null);
+  const prevTurnRef = useRef(null);
 
   useEffect(() => {
     (async () => {
@@ -93,10 +86,7 @@ function App() {
       if (prevTurnRef.current !== null && dash.turn > prevTurnRef.current) {
         const net = (dash.audit || []).reduce((s, t) => s + Number(t.amount), 0);
         if (Math.abs(net) > 10) {
-          setFlash({
-            type:  net >= 0 ? 'positive' : 'negative',
-            label: (net >= 0 ? '+$' : '-$') + Math.abs(Math.round(net)).toLocaleString('es-AR'),
-          });
+          setFlash({ type: net >= 0 ? 'positive' : 'negative', label: (net >= 0 ? '+$' : '-$') + Math.abs(Math.round(net)).toLocaleString('es-AR') });
         }
       }
       prevTurnRef.current = dash.turn;
@@ -115,25 +105,19 @@ function App() {
     return () => { if (interval) clearInterval(interval); };
   }, [player, loadAll]);
 
-  // Cuando el dado aterriza: iluminar la celda de forma permanente hasta el siguiente turno
-  const handleRollComplete = useCallback(({ landing }) => {
-    setProjectedSquare(landing);
-  }, []);
-
-  const handleDiceClose = useCallback(() => {
-    setShowDice(false);
-    // mantenemos el glow hasta que el timer lo limpie solo
-  }, []);
-
+  const handleRollComplete = useCallback(({ landing }) => { setProjectedSquare(landing); }, []);
+  const handleDiceClose    = useCallback(() => { setShowDice(false); }, []);
   const logout = useCallback(() => {
     localStorage.removeItem('d77_player');
-    setPlayer(null);
-    setDashboard(null);
-    setProjectedSquare(null);
+    setPlayer(null); setDashboard(null); setProjectedSquare(null); setClickedSquare(null);
     prevTurnRef.current = null;
   }, []);
 
-  // ── Render ──
+  // Find clicked corp from market data
+  const clickedCorp = clickedSquare !== null
+    ? market.find(c => Number(c.board_position) === clickedSquare) || null
+    : null;
+
   if (initLoading) {
     return (
       <LiveBoard>
@@ -147,17 +131,13 @@ function App() {
   if (!player) {
     return (
       <LiveBoard>
-        <LoginScreen onLogin={(p) => {
-          localStorage.setItem('d77_player', JSON.stringify(p));
-          setPlayer(p);
-          prevTurnRef.current = null;
-        }} />
+        <LoginScreen onLogin={(p) => { localStorage.setItem('d77_player', JSON.stringify(p)); setPlayer(p); prevTurnRef.current = null; }} />
       </LiveBoard>
     );
   }
 
   return (
-    <LiveBoard players={players} market={market} projectedSquare={projectedSquare}>
+    <LiveBoard players={players} market={market} projectedSquare={projectedSquare} onCellClick={setClickedSquare}>
       <FlashOverlay flash={flash} onDone={() => setFlash(null)} />
 
       {showDice && dashboard && (
@@ -182,9 +162,9 @@ function App() {
         onOpenDice={() => setShowDice(true)}
         refresh={() => loadAll(player.id)}
         logout={logout}
+        clickedCorp={clickedCorp}
+        onCloseCorp={() => setClickedSquare(null)}
       />
-
-      {/* Guía flotante — siempre disponible cuando hay jugador */}
       <SurvivalGuide />
     </LiveBoard>
   );
@@ -200,10 +180,7 @@ function LoginScreen({ onLogin }) {
     e.preventDefault();
     setLoading(true);
     try {
-      const { player } = await api('auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ username, pin }),
-      });
+      const { player } = await api('auth/login', { method: 'POST', body: JSON.stringify({ username, pin }) });
       toast.success(`Bienvenido ${player.username}`);
       onLogin(player);
     } catch (e) { toast.error(e.message); } finally { setLoading(false); }
@@ -212,22 +189,14 @@ function LoginScreen({ onLogin }) {
   return (
     <div className="h-full overflow-y-auto flex items-center justify-center px-4 py-6">
       <div className="w-full max-w-sm">
-        {/* Logo */}
         <div className="mb-6 text-center">
           <div className="inline-flex items-center gap-2 px-3 py-1 border border-lime-400/40 bg-lime-400/10 rounded-full mb-3">
             <div className="w-2 h-2 bg-lime-400 rounded-full animate-pulse" />
-            <span className="text-[10px] font-mono uppercase tracking-widest text-lime-300">
-              Live Server · 7 Players
-            </span>
+            <span className="text-[10px] font-mono uppercase tracking-widest text-lime-300">Live Server · 7 Players</span>
           </div>
-          <h1 className="text-5xl font-black tracking-tighter text-white leading-none">
-            DISTRITO<span className="text-lime-400">77</span>
-          </h1>
-          <p className="text-zinc-500 font-mono text-[10px] uppercase tracking-widest mt-1">
-            Persistent Browser Game · WEGO System
-          </p>
+          <h1 className="text-5xl font-black tracking-tighter text-white leading-none">DISTRITO<span className="text-lime-400">77</span></h1>
+          <p className="text-zinc-500 font-mono text-[10px] uppercase tracking-widest mt-1">Persistent Browser Game · WEGO System</p>
         </div>
-
         <Card className="bg-zinc-950/90 backdrop-blur border-zinc-800">
           <CardHeader className="pb-3">
             <CardTitle className="text-lime-400 font-mono uppercase tracking-wider text-sm">// Acceso</CardTitle>
@@ -237,51 +206,21 @@ function LoginScreen({ onLogin }) {
             <form onSubmit={submit} className="space-y-3">
               <div>
                 <Label className="text-zinc-400 font-mono text-[10px] uppercase">Alias</Label>
-                <Input
-                  className="bg-black border-zinc-800 text-white font-mono uppercase tracking-wider focus-visible:ring-lime-400"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="FRANKI"
-                  required
-                />
+                <Input className="bg-black border-zinc-800 text-white font-mono uppercase tracking-wider focus-visible:ring-lime-400" value={username} onChange={e => setUsername(e.target.value)} placeholder="FRANKI" required />
               </div>
               <div>
                 <Label className="text-zinc-400 font-mono text-[10px] uppercase">PIN</Label>
-                <Input
-                  className="bg-black border-zinc-800 text-white font-mono tracking-[0.5em] text-center focus-visible:ring-lime-400"
-                  type="password"
-                  inputMode="numeric"
-                  maxLength={4}
-                  value={pin}
-                  onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-                  placeholder="••••"
-                  required
-                />
+                <Input className="bg-black border-zinc-800 text-white font-mono tracking-[0.5em] text-center focus-visible:ring-lime-400" type="password" inputMode="numeric" maxLength={4} value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, ''))} placeholder="••••" required />
               </div>
-              <Button
-                type="submit"
-                disabled={loading}
-                className="w-full bg-lime-400 hover:bg-lime-300 text-black font-bold uppercase tracking-wider"
-              >
+              <Button type="submit" disabled={loading} className="w-full bg-lime-400 hover:bg-lime-300 text-black font-bold uppercase tracking-wider">
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Conectar'}
               </Button>
             </form>
-
             <div className="mt-4 pt-3 border-t border-zinc-800">
               <p className="text-[9px] font-mono uppercase text-zinc-600 mb-1.5">// Roster</p>
               <div className="flex flex-wrap gap-x-2 gap-y-1 text-[9px] font-mono text-zinc-500">
-                {[
-                  ['FRANKI','0814'],['CECE','1234'],['TOBE','5678'],
-                  ['SANTI','9012'],['BEN','3456'],['MANU','7890'],['RETA','2468'],
-                ].map(([u,p]) => (
-                  <button
-                    key={u}
-                    type="button"
-                    className="hover:text-lime-400 transition-colors"
-                    onClick={() => { setUsername(u); setPin(p); }}
-                  >
-                    {u}
-                  </button>
+                {[['FRANKI','0814'],['CECE','1234'],['TOBE','5678'],['SANTI','9012'],['BEN','3456'],['MANU','7890'],['RETA','2468']].map(([u,p]) => (
+                  <button key={u} type="button" className="hover:text-lime-400 transition-colors" onClick={() => { setUsername(u); setPin(p); }}>{u}</button>
                 ))}
               </div>
             </div>
@@ -293,13 +232,13 @@ function LoginScreen({ onLogin }) {
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
-function Dashboard({ player, dashboard, market, players, state, refresh, logout, loading, setLoading, onOpenDice, projectedSquare }) {
+function Dashboard({ player, dashboard, market, players, state, refresh, logout, loading, setLoading, onOpenDice, projectedSquare, clickedCorp, onCloseCorp }) {
+  const [section,    setSection]    = useState('inicio');
+  const [mercadoTab, setMercadoTab] = useState('market');
+  const [arenaTab,   setArenaTab]   = useState('nissai');
+
   if (!dashboard) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-lime-400" />
-      </div>
-    );
+    return <div className="h-full flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-lime-400" /></div>;
   }
 
   const { player: pData, turn, netWorth, portfolio, audit, pendingOrders, auditTurn, lastGlobalEvent } = dashboard;
@@ -308,426 +247,841 @@ function Dashboard({ player, dashboard, market, players, state, refresh, logout,
     if (!confirm(`¿Resolver turno ${turn}? Esto es irreversible.`)) return;
     setLoading(true);
     try {
-      const res = await api('admin/resolve-turn', {
-        method: 'POST',
-        body: JSON.stringify({ admin_id: player.id }),
-      });
-      toast.success(`Turno ${turn} resuelto. ${res.summary.trades.length} trades ejecutados.`);
+      const res = await api('admin/resolve-turn', { method: 'POST', body: JSON.stringify({ admin_id: player.id }) });
+      toast.success(`Turno ${turn} resuelto.`);
       await refresh();
     } catch (e) { toast.error(e.message); } finally { setLoading(false); }
   };
 
   return (
-    // h-full + flex col: header fijo arriba, contenido scroll abajo
     <div className="h-full flex flex-col overflow-hidden bg-black/10">
-      {/* ── Header compacto ── */}
+      {/* ── Header ── */}
       <header className="shrink-0 border-b border-zinc-900 bg-black/70 backdrop-blur-xl z-30 px-3 py-2">
         <div className="flex items-center justify-between gap-2">
-          {/* Logo + estado */}
           <div className="flex items-center gap-2 min-w-0 overflow-hidden">
-            <h1 className="text-lg font-black tracking-tighter shrink-0">
-              D<span className="text-lime-400">77</span>
-            </h1>
+            <h1 className="text-lg font-black tracking-tighter shrink-0">D<span className="text-lime-400">77</span></h1>
             <div className="flex flex-wrap items-center gap-1.5 min-w-0">
               <div className="hidden sm:flex items-center gap-1.5 px-2 py-0.5 bg-zinc-900/80 rounded-full border border-zinc-800 text-[10px] font-mono">
                 <Flame className="h-2.5 w-2.5 text-orange-400" />
                 <span className="text-zinc-400">T<span className="text-lime-400 font-bold">{turn}</span></span>
                 <span className="text-zinc-700">·</span>
-                {(() => {
-                  const pos = pData.board_position ?? 0;
-                  const sq  = SQUARE_LABELS[pos];
-                  return (
-                    <span className={sq ? sq.cls + ' font-bold' : 'text-cyan-400 font-bold'}>
-                      📍{pos}{sq ? ' ' + sq.label : ''}
-                    </span>
-                  );
-                })()}
+                {(() => { const pos = pData.board_position ?? 0; const sq = SQUARE_LABELS[pos]; return <span className={sq ? sq.cls + ' font-bold' : 'text-cyan-400 font-bold'}>📍{pos}{sq ? ' ' + sq.label : ''}</span>; })()}
                 {state.locked && <Badge className="bg-red-500/20 text-red-400 text-[9px] ml-1">LOCK</Badge>}
               </div>
-              {/* Indicador de aterrizaje del dado */}
               {projectedSquare !== null && (() => {
-                const sq   = SQUARE_LABELS[projectedSquare];
+                const sq = SQUARE_LABELS[projectedSquare];
                 const corp = market.find(c => c.board_position === projectedSquare);
                 const dest = sq ? sq.label : corp ? corp.name : `Casilla ${projectedSquare}`;
                 return (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.85 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="flex items-center gap-1 px-2 py-0.5 bg-lime-400/15 border border-lime-400/50 rounded-full text-[10px] font-mono text-lime-300 shrink-0"
-                  >
-                    <span>🎲</span>
-                    <span className="font-bold text-lime-400">{projectedSquare}</span>
-                    <span className="text-lime-500">➔</span>
-                    <span className="truncate max-w-[80px]">{dest}</span>
+                  <motion.div initial={{ opacity: 0, scale: 0.85 }} animate={{ opacity: 1, scale: 1 }} className="flex items-center gap-1 px-2 py-0.5 bg-lime-400/15 border border-lime-400/50 rounded-full text-[10px] font-mono text-lime-300 shrink-0">
+                    <span>🎲</span><span className="font-bold text-lime-400">{projectedSquare}</span><span className="text-lime-500">➔</span><span className="truncate max-w-[80px]">{dest}</span>
                   </motion.div>
                 );
               })()}
             </div>
           </div>
-
-          {/* Acciones */}
           <div className="flex items-center gap-1.5 shrink-0">
-            <Button
-              variant="ghost" size="icon"
-              onClick={onOpenDice}
-              className="h-8 w-8 text-lime-400 hover:text-lime-300 hover:bg-lime-400/10"
-              title="Tirar dado"
-            >
+            <Button variant="ghost" size="icon" onClick={onOpenDice} className="h-8 w-8 text-lime-400 hover:text-lime-300 hover:bg-lime-400/10" title="Tirar dado">
               <Dices className="h-4 w-4" />
             </Button>
+            {pData.is_admin && (
+              <Button variant="ghost" size="icon" onClick={() => setSection(s => s === 'admin' ? 'inicio' : 'admin')} className={`h-8 w-8 transition-colors ${section === 'admin' ? 'text-orange-400 bg-orange-400/10' : 'text-zinc-500 hover:text-orange-400'}`} title="Admin">
+                <Settings className="h-3.5 w-3.5" />
+              </Button>
+            )}
             <div className="flex items-center gap-1.5">
-              <div
-                className="w-7 h-7 rounded-full flex items-center justify-center font-black text-black text-xs ring-2 ring-black/20"
-                style={{ backgroundColor: pData.avatar_color }}
-              >
-                {pData.username[0]}
-              </div>
+              <div className="w-7 h-7 rounded-full flex items-center justify-center font-black text-black text-xs ring-2 ring-black/20" style={{ backgroundColor: pData.avatar_color }}>{pData.username[0]}</div>
               <div className="hidden sm:block leading-none">
-                <div className="text-xs font-bold flex items-center gap-1">
-                  {pData.username}
-                  {pData.is_admin && <span className="text-[8px] font-mono text-lime-400 uppercase">Admin</span>}
-                </div>
+                <div className="text-xs font-bold flex items-center gap-1">{pData.username}</div>
                 <RoleBadge role={pData.player_role} />
               </div>
             </div>
-            <Button variant="ghost" size="icon" onClick={logout} className="h-8 w-8 text-zinc-500 hover:text-white">
-              <LogOut className="h-3.5 w-3.5" />
-            </Button>
+            <Button variant="ghost" size="icon" onClick={logout} className="h-8 w-8 text-zinc-500 hover:text-white"><LogOut className="h-3.5 w-3.5" /></Button>
           </div>
         </div>
       </header>
 
-      {/* ── Contenido scrollable ── */}
+      {/* ── Scroll content ── */}
       <div className="flex-1 overflow-y-auto overscroll-contain" style={{ scrollbarWidth: 'thin', scrollbarColor: '#3f3f46 transparent' }}>
         <div className="px-2 py-2 space-y-2">
-
           {/* KPIs */}
-          <div className="grid grid-cols-2 gap-2">
-            <KpiCard label="Net Worth"   value={fmt(netWorth)}                                                   icon={<TrendingUp className="h-3.5 w-3.5" />} accent="lime" />
-            <KpiCard label="Cash"        value={fmt(pData.liquid_cash)}                                          icon={<Wallet     className="h-3.5 w-3.5" />} accent="cyan" />
-            <KpiCard label="IC"          value={Math.round(pData.intellectual_capital).toLocaleString('es-AR') + ' IC'} icon={<Zap    className="h-3.5 w-3.5" />} accent="orange" />
-            <KpiCard label="Corps"       value={portfolio.length}                                                icon={<Building2  className="h-3.5 w-3.5" />} accent="pink" />
+          <div className="grid grid-cols-4 gap-1.5">
+            <KpiCard label="NW"    value={fmt(netWorth)}                                                         icon={<TrendingUp className="h-3 w-3" />} accent="lime"   />
+            <KpiCard label="Cash"  value={fmt(pData.liquid_cash)}                                                icon={<Wallet     className="h-3 w-3" />} accent="cyan"   />
+            <KpiCard label="IC"    value={Math.round(pData.intellectual_capital).toLocaleString('es-AR') + ' IC'} icon={<Zap       className="h-3 w-3" />} accent="orange" />
+            <KpiCard label="Corps" value={portfolio.length}                                                      icon={<Building2  className="h-3 w-3" />} accent="pink"   />
           </div>
 
-          {/* Capítulo 11 */}
+          {/* Chapter 11 */}
           {pData.bankrupt && (
             <div className="bg-red-950/40 border border-red-500/50 rounded-lg p-3 flex items-start gap-2">
               <ShieldAlert className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
               <div>
                 <div className="font-bold text-red-300 uppercase text-xs">Chapter 11 · Receivership</div>
-                <div className="text-[10px] text-red-400/80 mt-0.5">
-                  Inyección aplicada. {pData.tax_exempt_turns} turnos exentos restantes.
-                </div>
+                <div className="text-[10px] text-red-400/80 mt-0.5">Inyección aplicada. {pData.tax_exempt_turns} turnos exentos restantes.</div>
               </div>
             </div>
           )}
 
-          {/* Tabs */}
-          <Tabs defaultValue="dashboard" className="w-full">
-            <TabsList className="bg-zinc-950 border border-zinc-900 p-0.5 font-mono uppercase text-[10px] h-auto flex-wrap gap-0.5 w-full">
-              {[
-                ['dashboard','Daily'],
-                ['market','Mercado'],
-                ['portfolio','Portfolio'],
-                ['leaderboard','Ranking'],
-                ['alliances','Alianzas'],
-                ['tech','Tech'],
-                ['nissai','🥷'],
-                ['casino','🎰'],
-                ['bounty','🏴‍☠️'],
-                ...(pData.is_admin ? [['admin','Admin']] : []),
-              ].map(([val,lbl]) => (
-                <TabsTrigger
-                  key={val}
-                  value={val}
-                  className={`flex-1 min-w-[40px] py-1 text-[10px] data-[state=active]:text-black ${
-                    val === 'tech' || val === 'admin'
-                      ? 'data-[state=active]:bg-orange-400'
-                      : val === 'nissai'
-                        ? 'data-[state=active]:bg-red-500 data-[state=active]:text-white'
-                        : val === 'casino'
-                          ? 'data-[state=active]:bg-purple-500 data-[state=active]:text-white'
-                          : val === 'bounty'
-                            ? 'data-[state=active]:bg-amber-500'
-                            : 'data-[state=active]:bg-lime-400'
-                  }`}
-                >
-                  {lbl}
-                </TabsTrigger>
-              ))}
-            </TabsList>
+          {/* ── Section Content ── */}
+          {section === 'inicio' && (
+            <InicioSection
+              dashboard={dashboard}
+              market={market}
+              player={player}
+              players={players}
+              turn={turn}
+              refresh={refresh}
+              auditTurn={auditTurn}
+              lastGlobalEvent={lastGlobalEvent}
+              portfolio={portfolio}
+              audit={audit}
+              pendingOrders={pendingOrders}
+              pData={pData}
+            />
+          )}
+          {section === 'mercado' && (
+            <MercadoSection
+              tab={mercadoTab}
+              setTab={setMercadoTab}
+              market={market}
+              player={player}
+              portfolio={portfolio}
+              turn={turn}
+              refresh={refresh}
+              pData={pData}
+            />
+          )}
+          {section === 'arena' && (
+            <ArenaSection
+              tab={arenaTab}
+              setTab={setArenaTab}
+              player={player}
+              players={players}
+              market={market}
+              pData={pData}
+              refresh={refresh}
+            />
+          )}
+          {section === 'pactos' && (
+            <AlliancesTab player={player} players={players} liquidCash={Number(pData.liquid_cash)} onChange={refresh} />
+          )}
+          {section === 'lab' && (
+            <TechTreeTab player={player} ic={Number(pData.intellectual_capital)} onChange={refresh} />
+          )}
+          {section === 'admin' && pData.is_admin && (
+            <AdminSection state={state} resolveTurn={resolveTurn} loading={loading} turn={turn} />
+          )}
+          {section === 'ranking' && (
+            <RankingSection players={players} player={player} />
+          )}
+        </div>
+      </div>
 
-            {/* Daily */}
-            <TabsContent value="dashboard" className="space-y-2 mt-2">
-              {/* Evento global del último turno */}
-              {lastGlobalEvent && (
-                <div className="bg-indigo-950/40 border border-indigo-500/40 rounded-xl p-3 flex items-start gap-3">
-                  <span className="text-2xl shrink-0 leading-none mt-0.5">🌐</span>
-                  <div className="min-w-0">
-                    <div className="font-black text-indigo-300 text-xs uppercase tracking-wider">{lastGlobalEvent.label}</div>
-                    <div className="text-[11px] text-indigo-400/80 mt-0.5">{lastGlobalEvent.desc}</div>
-                    {lastGlobalEvent.district && (
-                      <div className="text-[10px] font-mono text-indigo-500 mt-1">
-                        Zona afectada: <span className="text-indigo-300 font-bold">{lastGlobalEvent.district}</span>
-                        {' · '}{lastGlobalEvent.pct > 0 ? '+' : ''}{(lastGlobalEvent.pct * 100).toFixed(0)}% FMV
-                      </div>
-                    )}
-                    <div className="text-[9px] font-mono text-indigo-600 mt-1 uppercase">Turno #{auditTurn}</div>
-                  </div>
-                </div>
-              )}
-              <div className="grid md:grid-cols-2 gap-2">
-                {/* Auditoría */}
-                <Card className="bg-zinc-950 border-zinc-900">
-                  <CardHeader className="py-2 px-3">
-                    <CardTitle className="text-lime-400 font-mono uppercase text-xs flex items-center gap-1.5">
-                      <History className="h-3.5 w-3.5" /> Auditoría
-                    </CardTitle>
-                    <CardDescription className="text-zinc-500 text-[10px] font-mono">
-                      Turno #{auditTurn || '—'} (último resuelto)
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="px-3 pb-3">
-                    {audit.length === 0 ? (
-                      <p className="text-xs text-zinc-500 italic">Sin movimientos.</p>
-                    ) : (
-                      <div className="space-y-0.5 max-h-56 overflow-y-auto">
-                        {audit.map((t, i) => (
-                          <div key={i} className="flex items-center justify-between py-1 border-b border-zinc-900 text-xs">
-                            <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                              <TxBadge type={t.tx_type} />
-                              <span className="text-zinc-400 text-[10px] truncate">{t.description}</span>
-                            </div>
-                            <span className={`font-mono font-bold text-xs shrink-0 ${Number(t.amount) >= 0 ? 'text-lime-400' : 'text-red-400'}`}>
-                              {Number(t.amount) >= 0 ? '+' : ''}{fmtDec(t.amount)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
+      {/* ── Bottom Navigation ── */}
+      <BottomNav section={section} setSection={setSection} />
 
-                {/* Cola de órdenes */}
-                <Card className="bg-zinc-950 border-zinc-900">
-                  <CardHeader className="py-2 px-3">
-                    <CardTitle className="text-orange-400 font-mono uppercase text-xs flex items-center gap-1.5">
-                      <ShoppingCart className="h-3.5 w-3.5" /> Cola · Turno {turn}
-                    </CardTitle>
-                    <CardDescription className="text-zinc-500 text-[10px] font-mono">
-                      Se ejecutan al resolver
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="px-3 pb-3">
-                    {pendingOrders.length === 0 ? (
-                      <p className="text-xs text-zinc-500 italic">Sin órdenes. Usá Mercado.</p>
-                    ) : (
-                      <div className="space-y-1.5">
-                        <AnimatePresence>
-                          {pendingOrders.map((o) => (
-                            <ActionReceipt
-                              key={o.id}
-                              order={o}
-                              onCancel={async (id) => {
-                                try { await api('orders/' + id, { method: 'DELETE' }); toast.success('Cancelada'); refresh(); }
-                                catch (e) { toast.error(e.message); }
-                              }}
-                            />
-                          ))}
-                        </AnimatePresence>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
+      {/* ── Corp Detail Modal (board cell click) ── */}
+      <AnimatePresence>
+        {clickedCorp && (
+          <CorpDetailModal
+            corp={clickedCorp}
+            player={player}
+            myShares={portfolio.find(p => p.corp_id === clickedCorp.id)?.shares || 0}
+            turn={turn}
+            onClose={onCloseCorp}
+            refresh={refresh}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ── Bottom Navigation ─────────────────────────────────────────────────────────
+const NAV = [
+  { id: 'inicio',  Icon: Home,       label: 'Inicio',  color: 'text-lime-400',   bg: 'bg-lime-400/15'   },
+  { id: 'mercado', Icon: BarChart2,   label: 'Mercado', color: 'text-cyan-400',   bg: 'bg-cyan-400/15'   },
+  { id: 'arena',   Icon: Target,      label: 'Arena',   color: 'text-red-400',    bg: 'bg-red-400/15'    },
+  { id: 'pactos',  Icon: Users,       label: 'Pactos',  color: 'text-orange-400', bg: 'bg-orange-400/15' },
+  { id: 'lab',     Icon: FlaskConical,label: 'Lab',     color: 'text-purple-400', bg: 'bg-purple-400/15' },
+];
+
+function BottomNav({ section, setSection }) {
+  return (
+    <nav className="shrink-0 border-t border-zinc-900 bg-black/80 backdrop-blur-xl">
+      <div className="flex">
+        {NAV.map(({ id, Icon, label, color, bg }) => {
+          const isActive = section === id;
+          return (
+            <button
+              key={id}
+              onClick={() => setSection(id)}
+              className={`flex-1 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors ${isActive ? color : 'text-zinc-600 hover:text-zinc-400'}`}
+            >
+              <div className={`p-1.5 rounded-lg transition-colors ${isActive ? bg : ''}`}>
+                <Icon className="h-4 w-4" />
               </div>
-            </TabsContent>
+              <span className={`text-[9px] font-mono uppercase tracking-wide leading-none ${isActive ? 'font-bold' : ''}`}>{label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
 
-            {/* Mercado */}
-            <TabsContent value="market" className="mt-2">
-              <MarketTab market={market} player={player} refresh={refresh} />
-            </TabsContent>
+// ── Sección Inicio — Pulso del Mercado ────────────────────────────────────────
+function InicioSection({ dashboard, market, player, turn, refresh, auditTurn, lastGlobalEvent, portfolio, audit, pendingOrders, pData }) {
 
-            {/* Portfolio */}
-            <TabsContent value="portfolio" className="mt-2">
-              <Card className="bg-zinc-950 border-zinc-900">
-                <CardHeader className="py-2 px-3">
-                  <CardTitle className="text-lime-400 font-mono uppercase text-xs">Portfolio de Acciones</CardTitle>
-                </CardHeader>
-                <CardContent className="px-3 pb-3">
-                  {portfolio.length === 0 ? (
-                    <p className="text-zinc-500 italic text-xs">No posees acciones.</p>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableRow className="border-zinc-800 hover:bg-transparent">
-                            {['Corporación','Shares','%','FMV','Valor','CEO'].map(h => (
-                              <TableHead key={h} className="text-zinc-500 font-mono uppercase text-[9px] px-2 py-1">{h}</TableHead>
-                            ))}
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {portfolio.map((s) => {
-                            const pct   = (s.shares / s.total_shares) * 100;
-                            const value = (s.shares / s.total_shares) * Number(s.fair_market_value);
-                            const isCeo = s.ceo_player_id === player.id;
-                            return (
-                              <TableRow key={s.corp_id} className="border-zinc-900 hover:bg-zinc-900/30">
-                                <TableCell className="px-2 py-1.5">
-                                  <div className="font-bold text-white text-xs">{s.name}</div>
-                                  <div className="text-[9px] text-zinc-500 font-mono uppercase">{s.district}</div>
-                                </TableCell>
-                                <TableCell className="font-mono text-xs px-2 py-1.5">{s.shares}</TableCell>
-                                <TableCell className="font-mono text-lime-400 text-xs px-2 py-1.5">{pct.toFixed(1)}%</TableCell>
-                                <TableCell className="font-mono text-xs px-2 py-1.5">{fmt(s.fair_market_value)}</TableCell>
-                                <TableCell className="font-mono font-bold text-lime-400 text-xs px-2 py-1.5">{fmt(value)}</TableCell>
-                                <TableCell className="px-2 py-1.5">
-                                  {isCeo
-                                    ? <Badge className="bg-orange-500/20 text-orange-300 border-orange-500/30 text-[9px]"><Crown className="h-2.5 w-2.5 mr-0.5" />TÚ</Badge>
-                                    : <span className="text-[10px] text-zinc-500 font-mono">{s.ceo_name || '—'}</span>}
-                                </TableCell>
-                              </TableRow>
-                            );
-                          })}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
+  // Compute estimated cashflow from portfolio
+  const incMult  = 1 + 0.01 * Math.pow(Math.max(1, turn), 1.15);
+  const costMult = Math.pow(1.02, Math.max(0, turn - 1));
+  let totalDiv = 0, totalMaint = 0;
+  for (const h of portfolio) {
+    const corp = market.find(c => c.id === h.corp_id);
+    if (!corp) continue;
+    const myPct = h.shares / (corp.total_shares || 100);
+    totalDiv   += Number(corp.base_income || 0) * incMult * myPct;
+    totalMaint += (myPct * Number(corp.fair_market_value)) * 0.015 * costMult;
+  }
+  const netCashflow = totalDiv - totalMaint;
 
-            {/* Ranking */}
-            <TabsContent value="leaderboard" className="mt-2">
-              <Card className="bg-zinc-950 border-zinc-900">
-                <CardHeader className="py-2 px-3">
-                  <CardTitle className="text-lime-400 font-mono uppercase text-xs">Ranking · Net Worth</CardTitle>
-                </CardHeader>
-                <CardContent className="px-3 pb-3">
-                  <div className="space-y-1.5">
-                    {players.map((p, i) => (
-                      <div
-                        key={p.id}
-                        className={`flex items-center gap-2 p-2 rounded border ${
-                          p.id === player.id ? 'border-lime-500/50 bg-lime-500/5' : 'border-zinc-900 bg-zinc-900/30'
-                        }`}
-                      >
-                        <div className="text-xl font-black text-zinc-700 w-6 shrink-0">{i + 1}</div>
-                        <div
-                          className="w-8 h-8 rounded-full flex items-center justify-center font-black text-black text-sm shrink-0"
-                          style={{ backgroundColor: p.avatar_color }}
-                        >
-                          {p.username[0]}
+  // Top picks: corps with score ≥ 4, available supply > 0, not owned by player
+  const scoredMarket = market.map(c => ({ ...c, score: corpScore(c, turn) }));
+  const topPicks = scoredMarket
+    .filter(c => c.score >= 4 && ((c.total_shares || 100) - (c.owned_shares || 0)) > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+
+  // Holdings bleeding cash
+  const danger = portfolio.filter(h => {
+    const corp = market.find(c => c.id === h.corp_id);
+    if (!corp) return false;
+    const myPct      = h.shares / (corp.total_shares || 100);
+    const div        = Number(corp.base_income || 0) * incMult * myPct;
+    const maint      = myPct * Number(corp.fair_market_value) * 0.015 * costMult;
+    return (div - maint) < 0;
+  }).map(h => {
+    const corp   = market.find(c => c.id === h.corp_id);
+    const myPct  = h.shares / (corp.total_shares || 100);
+    const net    = Number(corp.base_income || 0) * incMult * myPct - myPct * Number(corp.fair_market_value) * 0.015 * costMult;
+    return { ...h, corpName: corp?.name, net };
+  });
+
+  const [auditOpen, setAuditOpen] = useState(false);
+
+  return (
+    <div className="space-y-2">
+      {/* Global Event */}
+      {lastGlobalEvent && (
+        <div className="bg-indigo-950/40 border border-indigo-500/40 rounded-xl p-3 flex items-start gap-3">
+          <span className="text-2xl shrink-0 leading-none mt-0.5">🌐</span>
+          <div className="min-w-0">
+            <div className="font-black text-indigo-300 text-xs uppercase tracking-wider">{lastGlobalEvent.label}</div>
+            <div className="text-[11px] text-indigo-400/80 mt-0.5">{lastGlobalEvent.desc}</div>
+            {lastGlobalEvent.district && (
+              <div className="text-[10px] font-mono text-indigo-500 mt-1">
+                Zona: <span className="text-indigo-300 font-bold">{lastGlobalEvent.district}</span> · {lastGlobalEvent.pct > 0 ? '+' : ''}{(lastGlobalEvent.pct * 100).toFixed(0)}% FMV
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Cashflow Bar */}
+      {portfolio.length > 0 && (
+        <div className={`border rounded-xl p-3 ${netCashflow >= 0 ? 'bg-lime-950/30 border-lime-700/40' : 'bg-red-950/30 border-red-700/40'}`}>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[9px] font-mono uppercase text-zinc-500">Cashflow estimado / turno</span>
+            <span className={`font-black text-base font-mono ${netCashflow >= 0 ? 'text-lime-400' : 'text-red-400'}`}>
+              {netCashflow >= 0 ? '+' : ''}{fmt(Math.round(netCashflow))}
+            </span>
+          </div>
+          <div className="flex gap-3 text-[9px] font-mono">
+            <span className="text-lime-500">▲ Div: {fmt(Math.round(totalDiv))}</span>
+            <span className="text-red-500">▼ Mnt: {fmt(Math.round(totalMaint))}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Top Picks */}
+      {topPicks.length > 0 && (
+        <Card className="bg-zinc-950 border-zinc-900">
+          <CardHeader className="py-2 px-3">
+            <CardTitle className="text-lime-400 font-mono uppercase text-xs flex items-center gap-1.5">
+              🔥 Mejores picks hoy
+            </CardTitle>
+            <CardDescription className="text-zinc-500 text-[10px]">Mayor rentabilidad disponible</CardDescription>
+          </CardHeader>
+          <CardContent className="px-3 pb-3 space-y-2">
+            {topPicks.map(c => (
+              <MiniCorpCard key={c.id} corp={c} player={player} refresh={refresh} />
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Danger Holdings */}
+      {danger.length > 0 && (
+        <Card className="bg-zinc-950 border-red-900/40">
+          <CardHeader className="py-2 px-3">
+            <CardTitle className="text-red-400 font-mono uppercase text-xs flex items-center gap-1.5">
+              <AlertTriangle className="h-3.5 w-3.5" /> Atención — holdings negativos
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-3 pb-3 space-y-1.5">
+            {danger.map(h => (
+              <div key={h.corp_id} className="flex items-center justify-between bg-red-950/20 border border-red-900/30 rounded-lg px-3 py-1.5">
+                <span className="text-xs font-bold text-white">{h.corpName}</span>
+                <span className="font-mono text-xs text-red-400 font-bold">{fmt(Math.round(h.net))}/turno</span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Pending Orders */}
+      {pendingOrders.length > 0 && (
+        <Card className="bg-zinc-950 border-zinc-900">
+          <CardHeader className="py-2 px-3">
+            <CardTitle className="text-orange-400 font-mono uppercase text-xs flex items-center gap-1.5">
+              <ShoppingCart className="h-3.5 w-3.5" /> Cola · Turno {turn}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-3 pb-3 space-y-1.5">
+            <AnimatePresence>
+              {pendingOrders.map(o => (
+                <ActionReceipt key={o.id} order={o} onCancel={async (id) => {
+                  try { await api('orders/' + id, { method: 'DELETE' }); toast.success('Cancelada'); refresh(); }
+                  catch (e) { toast.error(e.message); }
+                }} />
+              ))}
+            </AnimatePresence>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Audit (collapsible) */}
+      <Card className="bg-zinc-950 border-zinc-900">
+        <button
+          onClick={() => setAuditOpen(o => !o)}
+          className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-zinc-900/40 transition-colors"
+        >
+          <span className="text-lime-400 font-mono uppercase text-xs flex items-center gap-1.5">
+            <History className="h-3.5 w-3.5" /> Auditoría — Turno #{auditTurn || '—'}
+          </span>
+          {auditOpen ? <ChevronDown className="h-4 w-4 text-zinc-500" /> : <ChevronRight className="h-4 w-4 text-zinc-500" />}
+        </button>
+        <AnimatePresence>
+          {auditOpen && (
+            <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
+              <div className="px-3 pb-3">
+                {audit.length === 0 ? (
+                  <p className="text-xs text-zinc-500 italic">Sin movimientos.</p>
+                ) : (
+                  <div className="space-y-0.5 max-h-48 overflow-y-auto">
+                    {audit.map((t, i) => (
+                      <div key={i} className="flex items-center justify-between py-1 border-b border-zinc-900 text-xs">
+                        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                          <TxBadge type={t.tx_type} />
+                          <span className="text-zinc-400 text-[10px] truncate">{t.description}</span>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="font-bold text-sm flex items-center gap-1.5">
-                            {p.username}
-                            {p.bankrupt && <Skull className="h-3 w-3 text-red-400" />}
-                          </div>
-                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                            <RoleBadge role={p.player_role} />
-                            <span className="text-[9px] text-zinc-500 font-mono">
-                              {fmt(p.liquid_cash)}
-                            </span>
-                            {(() => {
-                              const pos = p.board_position ?? 0;
-                              const sq  = SQUARE_LABELS[pos];
-                              return (
-                                <span className={`text-[9px] font-mono ${sq ? sq.cls : 'text-zinc-600'}`}>
-                                  📍{pos}{sq ? ' · ' + sq.label : ''}
-                                </span>
-                              );
-                            })()}
-                          </div>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <div className="text-base font-bold font-mono text-lime-400">{fmt(p.net_worth)}</div>
-                          <div className="text-[9px] text-zinc-500 font-mono uppercase">Net Worth</div>
-                        </div>
+                        <span className={`font-mono font-bold text-xs shrink-0 ${Number(t.amount) >= 0 ? 'text-lime-400' : 'text-red-400'}`}>
+                          {Number(t.amount) >= 0 ? '+' : ''}{fmtDec(t.amount)}
+                        </span>
                       </div>
                     ))}
                   </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </Card>
+    </div>
+  );
+}
 
-            {/* Admin */}
-            {pData.is_admin && (
-              <TabsContent value="admin" className="mt-2">
-                <AdminTab state={state} resolveTurn={resolveTurn} loading={loading} />
-              </TabsContent>
-            )}
+// ── Mini Corp Card (for Inicio picks) ─────────────────────────────────────────
+function MiniCorpCard({ corp, player, refresh }) {
+  const [loading, setLoading] = useState(null); // qty loading
 
-            {/* Alianzas */}
-            <TabsContent value="alliances" className="mt-2">
-              <AlliancesTab
-                player={player}
-                players={players}
-                liquidCash={Number(pData.liquid_cash)}
-                onChange={refresh}
-              />
-            </TabsContent>
+  const quickBuy = async (qty) => {
+    setLoading(qty);
+    try {
+      await api('orders', {
+        method: 'POST',
+        body: JSON.stringify({ player_id: player.id, order_type: 'BUY_SHARES', corporation_id: corp.id, shares: qty }),
+      });
+      toast.success(`+${qty} ${corp.name} encolado`);
+      refresh();
+    } catch (e) { toast.error(e.message); }
+    finally { setLoading(null); }
+  };
 
-            {/* Tech Tree */}
-            <TabsContent value="tech" className="mt-2">
-              <TechTreeTab
-                player={player}
-                ic={Number(pData.intellectual_capital)}
-                onChange={refresh}
-              />
-            </TabsContent>
+  const sharePrice = Number(corp.fair_market_value) / 100;
+  const supply     = (corp.total_shares || 100) - (corp.owned_shares || 0);
 
-            {/* 🥷 El Rey Nissai */}
-            <TabsContent value="nissai" className="mt-2">
-              <NissaiPanel
-                player={player}
-                players={players}
-                market={market}
-                onChange={refresh}
-              />
-            </TabsContent>
-
-            {/* 🎰 Casino de Medianoche */}
-            <TabsContent value="casino" className="mt-2">
-              <CasinoTab
-                player={player}
-                liquidCash={Number(pData.liquid_cash)}
-                onChange={refresh}
-              />
-            </TabsContent>
-
-            {/* 🏴‍☠️ Bounty Board */}
-            <TabsContent value="bounty" className="mt-2">
-              <BountyBoard
-                player={player}
-                players={players}
-                liquidCash={Number(pData.liquid_cash)}
-                onChange={refresh}
-              />
-            </TabsContent>
-          </Tabs>
+  return (
+    <div className="flex items-center gap-2 bg-zinc-900/40 border border-zinc-800 rounded-lg px-2.5 py-2">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="font-bold text-xs text-white truncate">{corp.name}</span>
+          <Badge className="bg-zinc-800 text-zinc-400 border-0 text-[8px] font-mono shrink-0">{corp.district}</Badge>
+        </div>
+        <div className="flex items-center gap-2 mt-0.5">
+          {'🔥'.repeat(corp.score).padEnd(5 * 2, '○').split('').join('')}
+          <span className="text-[9px] font-mono text-zinc-500">{fmtDec(sharePrice)}/sh · {supply} disp.</span>
         </div>
       </div>
+      <div className="flex gap-1 shrink-0">
+        {[5, 10].map(qty => (
+          <button
+            key={qty}
+            onClick={() => quickBuy(qty)}
+            disabled={!!loading || supply < qty}
+            className="px-2 py-1 bg-lime-400/15 hover:bg-lime-400/25 border border-lime-500/30 rounded text-[9px] font-mono font-bold text-lime-300 disabled:opacity-40 transition-colors"
+          >
+            {loading === qty ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : `+${qty}`}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Sección Mercado ───────────────────────────────────────────────────────────
+function MercadoSection({ tab, setTab, market, player, portfolio, turn, refresh, pData }) {
+  return (
+    <div className="space-y-2">
+      {/* Sub-nav */}
+      <div className="flex gap-1 p-1 bg-zinc-900/60 rounded-xl border border-zinc-800">
+        {[['market','📈 Mercado'],['portfolio','💼 Portfolio']].map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setTab(id)}
+            className={`flex-1 py-1.5 text-[10px] font-mono uppercase rounded-lg transition-colors ${tab === id ? 'bg-cyan-500/20 text-cyan-300 font-bold' : 'text-zinc-500 hover:text-zinc-300'}`}
+          >{label}</button>
+        ))}
+      </div>
+
+      {tab === 'market' && (
+        <SmartMarketTab market={market} player={player} portfolio={portfolio} turn={turn} refresh={refresh} />
+      )}
+      {tab === 'portfolio' && (
+        <PortfolioSection portfolio={portfolio} market={market} player={player} turn={turn} refresh={refresh} />
+      )}
+    </div>
+  );
+}
+
+// ── Smart Market Tab ──────────────────────────────────────────────────────────
+function SmartMarketTab({ market, player, portfolio, turn, refresh }) {
+  const [filter, setFilter] = useState('all'); // 'all' | 'hot' | 'mine'
+  const [expanded, setExpanded] = useState(null);
+
+  const myCorpIds = new Set(portfolio.map(p => p.corp_id));
+
+  const scored = market
+    .map(c => ({ ...c, score: corpScore(c, turn) }))
+    .sort((a, b) => b.score - a.score || Number(b.fair_market_value) - Number(a.fair_market_value));
+
+  const filtered = scored.filter(c => {
+    if (filter === 'hot')  return c.score >= 4;
+    if (filter === 'mine') return myCorpIds.has(c.id);
+    return true;
+  });
+
+  return (
+    <div className="space-y-2">
+      {/* Filter pills */}
+      <div className="flex gap-1.5">
+        {[['all','Todos'],['hot','🔥 Hot'],['mine','Mis corps']].map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setFilter(id)}
+            className={`px-3 py-1 text-[9px] font-mono uppercase rounded-full border transition-colors ${filter === id ? 'bg-lime-400/20 border-lime-500/50 text-lime-300 font-bold' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}
+          >{label}</button>
+        ))}
+      </div>
+
+      {/* Corp cards */}
+      <div className="space-y-1.5">
+        {filtered.map(corp => (
+          <SmartCorpCard
+            key={corp.id}
+            corp={corp}
+            player={player}
+            myShares={portfolio.find(p => p.corp_id === corp.id)?.shares || 0}
+            isExpanded={expanded === corp.id}
+            onToggle={() => setExpanded(e => e === corp.id ? null : corp.id)}
+            refresh={refresh}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Smart Corp Card ───────────────────────────────────────────────────────────
+function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh }) {
+  const [loading,    setLoading]    = useState(null);
+  const [customQty,  setCustomQty]  = useState('');
+  const [orderType,  setOrderType]  = useState('BUY_SHARES');
+
+  const sharePrice = Number(corp.fair_market_value) / 100;
+  const buyPrice   = sharePrice * 1.03;
+  const sellPrice  = sharePrice * 0.97;
+  const supply     = (corp.total_shares || 100) - (corp.owned_shares || 0);
+  const isCeo      = corp.ceo_player_id === player.id;
+
+  const placeOrder = async (type, qty) => {
+    const q = parseInt(qty, 10);
+    if (!q || q <= 0) return toast.error('Cantidad inválida');
+    setLoading(`${type}-${q}`);
+    try {
+      await api('orders', {
+        method: 'POST',
+        body: JSON.stringify({ player_id: player.id, order_type: type, corporation_id: corp.id, shares: q, limit_price: null }),
+      });
+      toast.success(`${type === 'BUY_SHARES' ? '+' : '-'}${q} ${corp.name}`);
+      setCustomQty('');
+      refresh();
+    } catch (e) { toast.error(e.message); }
+    finally { setLoading(null); }
+  };
+
+  return (
+    <motion.div layout className="bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden">
+      {/* Card header — always visible */}
+      <button onClick={onToggle} className="w-full text-left p-3 hover:bg-zinc-900/40 transition-colors">
+        <div className="flex items-start gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="font-bold text-sm text-white">{corp.name}</span>
+              {isCeo && <Crown className="h-3 w-3 text-orange-400 shrink-0" />}
+              <Badge className="bg-zinc-800 text-zinc-400 border-0 text-[8px] font-mono shrink-0">{corp.district}</Badge>
+              {myShares > 0 && <Badge className="bg-lime-500/15 text-lime-400 border-lime-500/30 text-[8px] font-mono shrink-0">{myShares} sh</Badge>}
+            </div>
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              {/* Score flames */}
+              <div className="flex gap-[1px]">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <span key={i} className={`text-[11px] ${i < corp.score ? 'opacity-100' : 'opacity-15'}`}>🔥</span>
+                ))}
+              </div>
+              <span className="text-[9px] font-mono text-zinc-500">{fmtDec(sharePrice)}/sh</span>
+              <span className={`text-[9px] font-mono ${supply > 20 ? 'text-zinc-400' : supply > 5 ? 'text-orange-400' : 'text-red-400'}`}>{supply} disp.</span>
+              <span className="text-[9px] font-mono text-zinc-500">CEO: {corp.ceo_name || '—'}</span>
+            </div>
+          </div>
+          <div className="shrink-0 text-right">
+            <div className="text-sm font-black font-mono text-lime-400">{fmt(corp.fair_market_value)}</div>
+            {isExpanded ? <ChevronDown className="h-3.5 w-3.5 text-zinc-500 ml-auto mt-1" /> : <ChevronRight className="h-3.5 w-3.5 text-zinc-500 ml-auto mt-1" />}
+          </div>
+        </div>
+      </button>
+
+      {/* Expanded: quick-order panel */}
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="overflow-hidden"
+          >
+            <div className="px-3 pb-3 space-y-2.5 border-t border-zinc-900">
+              {/* Quick BUY */}
+              <div className="pt-2.5">
+                <div className="text-[8px] font-mono uppercase text-zinc-500 mb-1.5 flex items-center gap-1">
+                  <TrendingUp className="h-2.5 w-2.5 text-lime-400" /> Comprar rápido
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {[5, 10, 25].map(qty => (
+                    <button
+                      key={qty}
+                      onClick={() => placeOrder('BUY_SHARES', qty)}
+                      disabled={!!loading || supply < qty}
+                      className="flex flex-col items-center py-2 px-1 bg-lime-400/10 hover:bg-lime-400/20 border border-lime-500/30 rounded-lg text-lime-300 disabled:opacity-40 transition-colors"
+                    >
+                      <span className="text-xs font-black">+{qty}</span>
+                      <span className="text-[8px] font-mono opacity-70">~{fmt(Math.round(qty * buyPrice))}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Quick SELL */}
+              {myShares > 0 && (
+                <div>
+                  <div className="text-[8px] font-mono uppercase text-zinc-500 mb-1.5 flex items-center gap-1">
+                    <TrendingDown className="h-2.5 w-2.5 text-red-400" /> Vender
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {[...new Set([Math.min(5, myShares), Math.min(10, myShares), myShares])].filter(v => v > 0).map(qty => (
+                      <button
+                        key={qty}
+                        onClick={() => placeOrder('SELL_SHARES', qty)}
+                        disabled={!!loading}
+                        className="flex flex-col items-center py-2 px-1 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-lg text-red-300 disabled:opacity-40 transition-colors"
+                      >
+                        <span className="text-xs font-black">{qty === myShares && qty > 10 ? 'Todo' : `-${qty}`}</span>
+                        <span className="text-[8px] font-mono opacity-70">~{fmt(Math.round(qty * sellPrice))}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Custom order */}
+              <div className="flex gap-1.5">
+                <select
+                  value={orderType}
+                  onChange={e => setOrderType(e.target.value)}
+                  className="bg-zinc-900 border border-zinc-800 text-white text-[9px] font-mono rounded-lg px-2 h-8 shrink-0"
+                >
+                  <option value="BUY_SHARES">Comprar</option>
+                  <option value="SELL_SHARES">Vender</option>
+                </select>
+                <Input
+                  type="number"
+                  min="1"
+                  value={customQty}
+                  onChange={e => setCustomQty(e.target.value)}
+                  placeholder="Cant."
+                  className="bg-black border-zinc-800 text-white font-mono h-8 text-xs"
+                />
+                <Button
+                  onClick={() => placeOrder(orderType, customQty)}
+                  disabled={!!loading || !customQty}
+                  size="sm"
+                  className={`shrink-0 h-8 font-bold text-xs px-3 ${orderType === 'BUY_SHARES' ? 'bg-lime-400 hover:bg-lime-300 text-black' : 'bg-red-700 hover:bg-red-600 text-white'}`}
+                >
+                  {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : 'OK'}
+                </Button>
+              </div>
+
+              {/* Banda de precio info */}
+              <p className="text-[8px] font-mono text-zinc-600">
+                Banda: {fmt(Number(corp.fair_market_value) * 0.5)} – {fmt(Number(corp.fair_market_value) * 2.5)}
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+// ── Portfolio Section ─────────────────────────────────────────────────────────
+function PortfolioSection({ portfolio, market, player, turn, refresh }) {
+  const [loading, setLoading] = useState(null);
+
+  const incMult  = 1 + 0.01 * Math.pow(Math.max(1, turn), 1.15);
+  const costMult = Math.pow(1.02, Math.max(0, turn - 1));
+
+  const sellQuick = async (corpId, qty) => {
+    setLoading(`${corpId}-${qty}`);
+    try {
+      await api('orders', {
+        method: 'POST',
+        body: JSON.stringify({ player_id: player.id, order_type: 'SELL_SHARES', corporation_id: corpId, shares: qty }),
+      });
+      const name = portfolio.find(p => p.corp_id === corpId)?.name || '';
+      toast.success(`-${qty} ${name} encolado`);
+      refresh();
+    } catch (e) { toast.error(e.message); }
+    finally { setLoading(null); }
+  };
+
+  if (portfolio.length === 0) {
+    return (
+      <Card className="bg-zinc-950 border-zinc-900">
+        <CardContent className="p-6 text-center">
+          <Building2 className="h-8 w-8 text-zinc-700 mx-auto mb-2" />
+          <p className="text-zinc-500 text-sm">No posees acciones. Usá el Mercado para comprar.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {portfolio.map(s => {
+        const corp   = market.find(c => c.id === s.corp_id);
+        const pct    = (s.shares / s.total_shares) * 100;
+        const value  = (s.shares / s.total_shares) * Number(s.fair_market_value);
+        const isCeo  = s.ceo_player_id === player.id;
+        const myPct  = s.shares / (corp?.total_shares || 100);
+        const div    = Number(corp?.base_income || 0) * incMult * myPct;
+        const maint  = myPct * Number(s.fair_market_value) * 0.015 * costMult;
+        const net    = div - maint;
+
+        return (
+          <div key={s.corp_id} className="bg-zinc-950 border border-zinc-800 rounded-xl p-3 space-y-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="font-bold text-sm text-white">{s.name}</span>
+                  {isCeo && <Badge className="bg-orange-500/20 text-orange-300 border-orange-500/30 text-[8px]"><Crown className="h-2 w-2 mr-0.5" />CEO</Badge>}
+                  <span className="text-[9px] font-mono text-zinc-500">{corp?.district}</span>
+                </div>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="text-xs font-mono text-zinc-400">{s.shares} sh · {pct.toFixed(1)}%</span>
+                  <span className={`text-[9px] font-mono font-bold ${net >= 0 ? 'text-lime-400' : 'text-red-400'}`}>
+                    {net >= 0 ? '+' : ''}{fmt(Math.round(net))}/t
+                  </span>
+                </div>
+              </div>
+              <div className="text-right shrink-0">
+                <div className="text-sm font-black font-mono text-lime-400">{fmt(Math.round(value))}</div>
+                <div className="text-[8px] font-mono text-zinc-500">{fmtDec(Number(s.fair_market_value) / 100)}/sh</div>
+              </div>
+            </div>
+
+            {/* Quick sell buttons */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[8px] font-mono text-zinc-600 uppercase shrink-0">Vender:</span>
+              {[...new Set([Math.min(5, s.shares), Math.min(10, s.shares), s.shares])].filter(v => v > 0).map(qty => (
+                <button
+                  key={qty}
+                  onClick={() => sellQuick(s.corp_id, qty)}
+                  disabled={loading === `${s.corp_id}-${qty}`}
+                  className="px-2 py-0.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded text-[9px] font-mono text-red-300 disabled:opacity-40 transition-colors"
+                >
+                  {loading === `${s.corp_id}-${qty}` ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : qty === s.shares && qty > 10 ? 'Todo' : `-${qty}`}
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Arena Section (Nissai / Casino / Bounty) ──────────────────────────────────
+function ArenaSection({ tab, setTab, player, players, market, pData, refresh }) {
+  const TABS = [
+    { id: 'nissai', label: '🥷 Nissai', activeClass: 'bg-red-700/30 text-red-300 border-red-700/40' },
+    { id: 'casino', label: '🎰 Casino', activeClass: 'bg-purple-700/30 text-purple-300 border-purple-700/40' },
+    { id: 'bounty', label: '🏴‍☠️ Bounty', activeClass: 'bg-amber-700/30 text-amber-300 border-amber-700/40' },
+  ];
+  const active = TABS.find(t => t.id === tab);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-1 p-1 bg-zinc-900/60 rounded-xl border border-zinc-800">
+        {TABS.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`flex-1 py-1.5 text-[10px] font-mono uppercase rounded-lg border transition-colors ${tab === t.id ? t.activeClass : 'text-zinc-500 border-transparent hover:text-zinc-300'}`}
+          >{t.label}</button>
+        ))}
+      </div>
+      {tab === 'nissai' && <NissaiPanel player={player} players={players} market={market} onChange={refresh} />}
+      {tab === 'casino' && <CasinoTab player={player} liquidCash={Number(pData.liquid_cash)} onChange={refresh} />}
+      {tab === 'bounty' && <BountyBoard player={player} players={players} liquidCash={Number(pData.liquid_cash)} onChange={refresh} />}
+    </div>
+  );
+}
+
+// ── Ranking Section ───────────────────────────────────────────────────────────
+function RankingSection({ players, player }) {
+  return (
+    <Card className="bg-zinc-950 border-zinc-900">
+      <CardHeader className="py-2 px-3">
+        <CardTitle className="text-lime-400 font-mono uppercase text-xs">Ranking · Net Worth</CardTitle>
+      </CardHeader>
+      <CardContent className="px-3 pb-3">
+        <div className="space-y-1.5">
+          {players.map((p, i) => (
+            <div key={p.id} className={`flex items-center gap-2 p-2 rounded border ${p.id === player.id ? 'border-lime-500/50 bg-lime-500/5' : 'border-zinc-900 bg-zinc-900/30'}`}>
+              <div className="text-xl font-black text-zinc-700 w-6 shrink-0">{i + 1}</div>
+              <div className="w-8 h-8 rounded-full flex items-center justify-center font-black text-black text-sm shrink-0" style={{ backgroundColor: p.avatar_color }}>{p.username[0]}</div>
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-sm flex items-center gap-1.5">{p.username}{p.bankrupt && <Skull className="h-3 w-3 text-red-400" />}</div>
+                <div className="flex items-center gap-2 mt-0.5 flex-wrap"><RoleBadge role={p.player_role} /><span className="text-[9px] text-zinc-500 font-mono">{fmt(p.liquid_cash)}</span></div>
+              </div>
+              <div className="text-right shrink-0">
+                <div className="text-base font-bold font-mono text-lime-400">{fmt(p.net_worth)}</div>
+                <div className="text-[9px] text-zinc-500 font-mono uppercase">NW</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Admin Section ─────────────────────────────────────────────────────────────
+function AdminSection({ state, resolveTurn, loading, turn }) {
+  const [logs, setLogs] = useState([]);
+  useEffect(() => { api('admin/turn-log').then(d => setLogs(d.logs)).catch(() => {}); }, [state.current_turn]);
+
+  return (
+    <div className="space-y-2">
+      <Card className="bg-gradient-to-br from-orange-950/40 to-black border-orange-500/30">
+        <CardHeader className="py-2 px-3">
+          <CardTitle className="text-orange-400 font-mono uppercase text-xs flex items-center gap-1.5">
+            <Flame className="h-3.5 w-3.5" /> Control de Turnos
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="px-3 pb-3">
+          <div className="flex items-center gap-4 flex-wrap">
+            <div>
+              <div className="text-[10px] font-mono uppercase text-zinc-500">Turno actual</div>
+              <div className="text-4xl font-black text-orange-400">{state.current_turn}</div>
+            </div>
+            <Button onClick={resolveTurn} disabled={loading || state.locked} className="bg-orange-400 hover:bg-orange-300 text-black font-bold uppercase tracking-wider h-12 px-6 text-sm">
+              {loading ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <Flame className="h-4 w-4 mr-1.5" />}
+              Resolver T{state.current_turn}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+      <Card className="bg-zinc-950 border-zinc-900">
+        <CardHeader className="py-2 px-3"><CardTitle className="text-lime-400 font-mono uppercase text-xs">Historial</CardTitle></CardHeader>
+        <CardContent className="px-3 pb-3">
+          {logs.length === 0 ? <p className="text-zinc-500 italic text-xs">Sin turnos resueltos.</p> : (
+            <div className="space-y-1.5 max-h-72 overflow-y-auto">
+              {logs.map(l => (
+                <div key={l.turn_number} className="border border-zinc-900 rounded p-2 bg-zinc-900/30">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="font-bold font-mono text-xs">TURNO #{l.turn_number}</div>
+                    <div className="text-[9px] text-zinc-500 font-mono">{new Date(l.resolved_at).toLocaleString('es-AR')}</div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1 text-[10px] font-mono">
+                    <div><span className="text-zinc-500">Trades:</span> <span className="text-lime-400">{l.summary?.trades?.length || 0}</span></div>
+                    <div><span className="text-zinc-500">Eventos:</span> <span className="text-orange-400">{l.summary?.events?.length || 0}</span></div>
+                    <div><span className="text-zinc-500">FMV:</span> <span className="text-cyan-400">{Object.keys(l.summary?.fmv_changes || {}).length}</span></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
 
 // ── KPI Card ──────────────────────────────────────────────────────────────────
 function KpiCard({ label, value, icon, accent }) {
-  const colors = {
-    lime:   { text: 'text-lime-400',   border: 'border-lime-500/20'   },
-    cyan:   { text: 'text-cyan-400',   border: 'border-cyan-500/20'   },
-    orange: { text: 'text-orange-400', border: 'border-orange-500/20' },
-    pink:   { text: 'text-pink-400',   border: 'border-pink-500/20'   },
-  };
+  const colors = { lime: { text: 'text-lime-400', border: 'border-lime-500/20' }, cyan: { text: 'text-cyan-400', border: 'border-cyan-500/20' }, orange: { text: 'text-orange-400', border: 'border-orange-500/20' }, pink: { text: 'text-pink-400', border: 'border-pink-500/20' } };
   const c = colors[accent];
   return (
-    <div className={`bg-zinc-950 border ${c.border} rounded-lg p-3`}>
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-[9px] uppercase font-mono tracking-widest text-zinc-500">{label}</span>
+    <div className={`bg-zinc-950 border ${c.border} rounded-lg p-2`}>
+      <div className="flex items-center justify-between mb-0.5">
+        <span className="text-[8px] uppercase font-mono tracking-widest text-zinc-500">{label}</span>
         <span className={c.text}>{icon}</span>
       </div>
-      <div className={`text-xl font-black font-mono ${c.text}`}>{value}</div>
+      <div className={`text-base font-black font-mono ${c.text} truncate`}>{value}</div>
     </div>
   );
 }
@@ -737,12 +1091,7 @@ function RoleBadge({ role }) {
   const r = ROLE_LABELS[role];
   if (!r) return null;
   return (
-    <span
-      className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full border leading-none"
-      style={{ color: r.color, borderColor: r.color + '60', backgroundColor: r.color + '18' }}
-    >
-      {r.label}
-    </span>
+    <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full border leading-none" style={{ color: r.color, borderColor: r.color + '60', backgroundColor: r.color + '18' }}>{r.label}</span>
   );
 }
 
@@ -768,239 +1117,14 @@ function TxBadge({ type }) {
     ACHIEVEMENT:         { label: 'ACH',   cls: 'bg-amber-500/30  text-amber-200'  },
     TRANSIT_RENT:        { label: 'RENT',  cls: 'bg-rose-500/20   text-rose-300'   },
     TRANSIT_RENT_INCOME: { label: 'R+',    cls: 'bg-lime-500/20   text-lime-300'   },
+    CASINO:              { label: '🎰',    cls: 'bg-purple-500/20 text-purple-300' },
     NISSAI_COST:         { label: 'NSS',   cls: 'bg-red-500/20    text-red-300'    },
     NISSAI_INCOME:       { label: 'NSS+',  cls: 'bg-red-500/30    text-red-200'    },
-    CASINO_BET:          { label: 'BET',   cls: 'bg-purple-500/20 text-purple-300' },
-    CASINO_WIN:          { label: 'WIN',   cls: 'bg-purple-500/30 text-purple-200' },
-    BOUNTY_LOCK:         { label: 'BNT',   cls: 'bg-amber-500/20  text-amber-300'  },
     BOUNTY_WIN:          { label: 'BNT+',  cls: 'bg-amber-500/30  text-amber-200'  },
     BOUNTY_REFUND:       { label: 'BREF',  cls: 'bg-zinc-700/40   text-zinc-400'   },
   };
-  const m = map[type] || { label: type, cls: 'bg-zinc-800 text-zinc-400' };
-  return (
-    <Badge className={`${m.cls} border-0 font-mono text-[9px] px-1.5 py-0 shrink-0`}>{m.label}</Badge>
-  );
-}
-
-// ── Market Tab ────────────────────────────────────────────────────────────────
-function MarketTab({ market, player, refresh }) {
-  const [selectedCorp, setSelectedCorp] = useState(null);
-  const [orderType,    setOrderType]    = useState('BUY_SHARES');
-  const [shares,       setShares]       = useState('');
-  const [limitPrice,   setLimitPrice]   = useState('');
-  const [submitting,   setSubmitting]   = useState(false);
-
-  const submit = async () => {
-    if (!selectedCorp || !shares) return toast.error('Seleccioná corp y cantidad');
-    setSubmitting(true);
-    try {
-      await api('orders', {
-        method: 'POST',
-        body: JSON.stringify({
-          player_id:      player.id,
-          order_type:     orderType,
-          corporation_id: selectedCorp,
-          shares:         parseInt(shares, 10),
-          limit_price:    limitPrice ? parseFloat(limitPrice) : null,
-        }),
-      });
-      toast.success('Orden en cola');
-      setShares(''); setLimitPrice('');
-      refresh();
-    } catch (e) { toast.error(e.message); } finally { setSubmitting(false); }
-  };
-
-  const corp = market.find(c => c.id === selectedCorp);
-
-  return (
-    <div className="grid md:grid-cols-3 gap-2">
-      {/* Lista de corps */}
-      <div className="md:col-span-2">
-        <Card className="bg-zinc-950 border-zinc-900">
-          <CardHeader className="py-2 px-3">
-            <CardTitle className="text-lime-400 font-mono uppercase text-xs">Corporaciones</CardTitle>
-            <CardDescription className="text-zinc-500 text-[10px] font-mono">
-              Tap para seleccionar · FMV total
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="px-3 pb-3">
-            <div className="grid sm:grid-cols-2 gap-2 max-h-96 overflow-y-auto pr-1">
-              {market.map((c) => {
-                const supply     = c.total_shares - c.owned_shares;
-                const isSelected = selectedCorp === c.id;
-                return (
-                  <motion.button
-                    key={c.id}
-                    onClick={() => setSelectedCorp(c.id)}
-                    whileHover={{ y: -2, scale: 1.01 }}
-                    whileTap={{ scale: 0.98 }}
-                    transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-                    style={{ willChange: 'transform' }}
-                    className={`text-left p-2.5 rounded-lg border transition-colors ${
-                      isSelected
-                        ? 'border-lime-400 bg-lime-400/5 shadow-[0_0_20px_rgba(163,230,53,0.2)]'
-                        : 'border-zinc-900 bg-zinc-900/40 hover:border-lime-400/30'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-1 mb-0.5">
-                      <div className="font-bold text-xs text-white leading-tight">{c.name}</div>
-                      <Badge className="bg-zinc-800 text-zinc-400 border-0 text-[8px] font-mono shrink-0">{c.district}</Badge>
-                    </div>
-                    <div className="text-[9px] text-zinc-500 italic mb-1.5">{c.tagline}</div>
-                    <div className="grid grid-cols-3 gap-1 text-[9px] font-mono">
-                      <div><div className="text-zinc-600 uppercase">FMV</div><div className="text-lime-400 font-bold">{fmt(c.fair_market_value)}</div></div>
-                      <div><div className="text-zinc-600 uppercase">Rent</div><div className="text-cyan-400 font-bold">{fmt(c.base_income)}</div></div>
-                      <div><div className="text-zinc-600 uppercase">Disp.</div><div className="text-orange-400 font-bold">{supply}/100</div></div>
-                    </div>
-                    <div className="mt-1.5 text-[9px] font-mono text-zinc-500">
-                      CEO: <span className="text-zinc-300">{c.ceo_name || 'Vacante'}</span>
-                    </div>
-                  </motion.button>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Panel de orden */}
-      <div>
-        <Card className="bg-zinc-950 border-zinc-900 md:sticky md:top-4">
-          <CardHeader className="py-2 px-3">
-            <CardTitle className="text-orange-400 font-mono uppercase text-xs">Nueva Orden</CardTitle>
-            {corp && (
-              <CardDescription className="text-zinc-400 text-[10px]">
-                <span className="text-white font-bold">{corp.name}</span><br />
-                Precio/share: <span className="text-lime-400 font-mono">{fmtDec(corp.fair_market_value / 100)}</span>
-              </CardDescription>
-            )}
-          </CardHeader>
-          <CardContent className="px-3 pb-3 space-y-2">
-            <div>
-              <Label className="text-zinc-400 font-mono text-[9px] uppercase">Tipo</Label>
-              <Select value={orderType} onValueChange={setOrderType}>
-                <SelectTrigger className="bg-black border-zinc-800 text-white text-xs h-8"><SelectValue /></SelectTrigger>
-                <SelectContent className="bg-zinc-950 border-zinc-800 text-white">
-                  <SelectItem value="BUY_SHARES">COMPRAR del mercado</SelectItem>
-                  <SelectItem value="SELL_SHARES">VENDER al mercado</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label className="text-zinc-400 font-mono text-[9px] uppercase">Cantidad</Label>
-              <Input type="number" min="1" max="100" value={shares} onChange={e => setShares(e.target.value)}
-                className="bg-black border-zinc-800 text-white font-mono h-8 text-xs" placeholder="0" />
-            </div>
-            <div>
-              <Label className="text-zinc-400 font-mono text-[9px] uppercase">Límite $/share (opc.)</Label>
-              <Input type="number" step="0.01" value={limitPrice} onChange={e => setLimitPrice(e.target.value)}
-                className="bg-black border-zinc-800 text-white font-mono h-8 text-xs" placeholder="Precio máx." />
-            </div>
-
-            {corp && shares && (
-              <div className="bg-black border border-zinc-800 rounded p-2 space-y-0.5 text-[10px] font-mono">
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Base/share:</span>
-                  <span>{fmtDec(corp.fair_market_value / 100)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Spread:</span>
-                  <span>{orderType === 'BUY_SHARES' ? '+3%' : '-3%'}</span>
-                </div>
-                <div className="flex justify-between border-t border-zinc-800 pt-1 mt-1">
-                  <span className="text-zinc-300">{orderType === 'BUY_SHARES' ? 'Costo est.:' : 'Ingreso est.:'}</span>
-                  <span className={orderType === 'BUY_SHARES' ? 'text-red-400 font-bold' : 'text-lime-400 font-bold'}>
-                    {fmt((corp.fair_market_value / 100) * parseInt(shares || '0', 10) * (orderType === 'BUY_SHARES' ? 1.03 : 0.97))}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            <Button
-              onClick={submit}
-              disabled={submitting || !selectedCorp}
-              className="w-full bg-lime-400 hover:bg-lime-300 text-black font-bold uppercase text-xs h-9"
-            >
-              {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Encolar Orden'}
-            </Button>
-            <p className="text-[9px] text-zinc-600 font-mono text-center">
-              Banda: {fmt((corp?.fair_market_value || 0) * 0.5)} – {fmt((corp?.fair_market_value || 0) * 2.5)}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-// ── Admin Tab ─────────────────────────────────────────────────────────────────
-function AdminTab({ state, resolveTurn, loading }) {
-  const [logs, setLogs] = useState([]);
-  useEffect(() => {
-    api('admin/turn-log').then(d => setLogs(d.logs)).catch(() => {});
-  }, [state.current_turn]);
-
-  return (
-    <div className="space-y-2">
-      <Card className="bg-gradient-to-br from-orange-950/40 to-black border-orange-500/30">
-        <CardHeader className="py-2 px-3">
-          <CardTitle className="text-orange-400 font-mono uppercase text-xs flex items-center gap-1.5">
-            <Flame className="h-3.5 w-3.5" /> Control de Turnos
-          </CardTitle>
-          <CardDescription className="text-zinc-400 text-[10px]">
-            Resuelve: trades → dividendos → mantenimiento → CEO → impuesto → bancarrota
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="px-3 pb-3">
-          <div className="flex items-center gap-4 flex-wrap">
-            <div>
-              <div className="text-[10px] font-mono uppercase text-zinc-500">Turno actual</div>
-              <div className="text-4xl font-black text-orange-400">{state.current_turn}</div>
-            </div>
-            <Button
-              onClick={resolveTurn}
-              disabled={loading || state.locked}
-              className="bg-orange-400 hover:bg-orange-300 text-black font-bold uppercase tracking-wider h-12 px-6 text-sm"
-            >
-              {loading
-                ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
-                : <Flame className="h-4 w-4 mr-1.5" />}
-              Resolver T{state.current_turn}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="bg-zinc-950 border-zinc-900">
-        <CardHeader className="py-2 px-3">
-          <CardTitle className="text-lime-400 font-mono uppercase text-xs">Historial</CardTitle>
-        </CardHeader>
-        <CardContent className="px-3 pb-3">
-          {logs.length === 0 ? (
-            <p className="text-zinc-500 italic text-xs">Sin turnos resueltos.</p>
-          ) : (
-            <div className="space-y-1.5 max-h-72 overflow-y-auto">
-              {logs.map(l => (
-                <div key={l.turn_number} className="border border-zinc-900 rounded p-2 bg-zinc-900/30">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="font-bold font-mono text-xs">TURNO #{l.turn_number}</div>
-                    <div className="text-[9px] text-zinc-500 font-mono">
-                      {new Date(l.resolved_at).toLocaleString('es-AR')}
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-3 gap-1 text-[10px] font-mono">
-                    <div><span className="text-zinc-500">Trades:</span> <span className="text-lime-400">{l.summary?.trades?.length || 0}</span></div>
-                    <div><span className="text-zinc-500">Eventos:</span> <span className="text-orange-400">{l.summary?.events?.length || 0}</span></div>
-                    <div><span className="text-zinc-500">FMV:</span> <span className="text-cyan-400">{Object.keys(l.summary?.fmv_changes || {}).length}</span></div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
+  const m = map[type] || { label: type?.slice(0,4) || '?', cls: 'bg-zinc-800 text-zinc-400' };
+  return <Badge className={`${m.cls} border-0 font-mono text-[9px] px-1.5 py-0 shrink-0`}>{m.label}</Badge>;
 }
 
 export default App;

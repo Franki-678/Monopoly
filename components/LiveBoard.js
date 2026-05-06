@@ -37,14 +37,15 @@ function abbr(name = '') {
 }
 
 // ── Celda individual (memoizada para 60fps) ───────────────────────────────────
-const BoardCell = memo(function BoardCell({ square, playersHere, corpShort, highlighted }) {
+const BoardCell = memo(function BoardCell({ square, playersHere, corpShort, highlighted, isClickable, onClick }) {
   const sp  = SPECIAL[square];
   const cc  = CC[square % CC.length];
   const gp  = GP[square];
 
   return (
     <motion.div
-      className="relative flex flex-col items-center justify-center overflow-hidden select-none"
+      onClick={isClickable ? onClick : undefined}
+      className={`relative flex flex-col items-center justify-center overflow-hidden select-none ${isClickable ? 'cursor-pointer' : ''}`}
       style={{
         gridRow: gp.r,
         gridColumn: gp.c,
@@ -84,16 +85,22 @@ const BoardCell = memo(function BoardCell({ square, playersHere, corpShort, high
         </span>
       ) : null}
 
+      {/* Hover overlay for clickable cells */}
+      {isClickable && (
+        <div className="absolute inset-0 bg-white/0 hover:bg-white/5 transition-colors z-10 pointer-events-none" />
+      )}
+
       {/* Avatares de jugadores */}
       <AnimatePresence>
         {playersHere.map((p, idx) => (
           <motion.div
             key={p.id}
-            className="absolute bottom-[2px] w-3.5 h-3.5 md:w-[17px] md:h-[17px] rounded-full flex items-center justify-center text-[6px] md:text-[7px] font-black text-black ring-[1px] ring-black/50 shadow-lg z-20"
+            title={p.username}
+            className="absolute bottom-[2px] w-4 h-4 md:w-[19px] md:h-[19px] rounded-full flex items-center justify-center text-[6px] md:text-[8px] font-black text-black ring-[1.5px] ring-black/60 shadow-lg z-20"
             style={{
               backgroundColor: p.avatar_color,
               willChange: 'transform, opacity',
-              left: `calc(50% + ${(idx - (playersHere.length - 1) / 2) * 14}px - 7px)`,
+              left: `calc(50% + ${(idx - (playersHere.length - 1) / 2) * 15}px - 8px)`,
             }}
             initial={{ scale: 0, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
@@ -109,9 +116,9 @@ const BoardCell = memo(function BoardCell({ square, playersHere, corpShort, high
 });
 
 // ── Tablero principal ─────────────────────────────────────────────────────────
-const CS = 'clamp(40px, 10vmin, 70px)';
+const CS = 'clamp(44px, 11.5vmin, 76px)';
 
-export default function LiveBoard({ players = [], market = [], projectedSquare = null, children }) {
+export default function LiveBoard({ players = [], market = [], projectedSquare = null, onCellClick, children }) {
   const playersBySquare = useMemo(() => {
     const m = {};
     players.forEach(p => {
@@ -127,6 +134,15 @@ export default function LiveBoard({ players = [], market = [], projectedSquare =
       if (c.board_position != null) m[c.board_position] = abbr(c.name);
     });
     return m;
+  }, [market]);
+
+  // Set of squares that have a corp → clickable
+  const corpSquares = useMemo(() => {
+    const s = new Set();
+    (market || []).forEach(c => {
+      if (c.board_position != null) s.add(Number(c.board_position));
+    });
+    return s;
   }, [market]);
 
   return (
@@ -152,6 +168,8 @@ export default function LiveBoard({ players = [], market = [], projectedSquare =
           playersHere={playersBySquare[sq] || []}
           corpShort={corpBySquare[sq]}
           highlighted={projectedSquare === sq}
+          isClickable={corpSquares.has(sq) && !!onCellClick}
+          onClick={() => onCellClick?.(sq)}
         />
       ))}
 
