@@ -15,14 +15,65 @@ async function sendTelegramMessage(text) {
   });
 }
 
+// ─── Chistes internos del grupo testosterona💉 ────────────────────────────────
+function getRandom(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+/**
+ * Devuelve un insulto/chiste del lore del grupo para cada tipo de evento.
+ * @param {'broke'|'patent'|'alliance'|'intro'} type
+ * @param {string} [playerName]
+ */
+function getRandomInsult(type, playerName) {
+  const P = playerName || 'Un jugador';
+
+  const insults = {
+    intro: [
+      `🏙️ *DISTRITO 77: TURNO RESUELTO* 🏙️\nApaguen el Spotify con Grey's Anatomy y miren los números, manga de autistas.`,
+      `🏙️ *EL GOBIERNO INFORMA* 🏙️\nAcá el que no corre vuela, y el que no, pregunta si el mate es dulce o salado como el Reta.`,
+      `🏙️ *CIERRE DE MERCADO* 🏙️\nTienen menos ganas de invertir que el viejo de Matemática de dar clases. Muévanse.`,
+      `🏙️ *REPORTE DIARIO DE LA TESTO* 🏙️\nLa economía está más dura que los papás del Josef pensando que nos drogamos.`,
+      `🏙️ *MERCADO CERRADO* 🏙️\nBienvenidos. Hay menos refuerzos de jerarquía acá que en el Talleres de Fassi, pero se sobrevive.`,
+    ],
+    broke: [
+      `📉 ${P} entró en Capítulo 11. Cayó más duro que Benja cuando quiso patear la pelota y se fue de jeta al piso como un Lego.`,
+      `📉 ${P} a la quiebra. Está más arruinado que el Cece vomitando en la casa de Franki en el UPD.`,
+      `📉 Bancarrota para ${P}. Más perdido que Manu subiéndose al bondi con el uniforme de colegio pero sin la mochila.`,
+      `📉 Que alguien asista a ${P}, está más deprimido que Alejo cuando mandó la pelota a la calle y casi le da a un auto.`,
+      `📉 ${P} se quedó sin un peso. Ya está pidiendo 150pe por MercadoPago para tomar agua.`,
+    ],
+    patent: [
+      `🔓 La patente de ${P} pasó a Open Source. Más regalada que la frente de Megamente de Josef.`,
+      `🔓 Patente liberada. Todos le van a meter mano a esta tecnología, igual que a los vasos que desaparecieron mágicamente en la previa.`,
+      `🔓 ${P} perdió la exclusividad. Esta tech ahora es de dominio público, como el video del "peruano chapo".`,
+      `🔓 Se venció la patente de ${P}. Ahora cualquiera entra, como Alejo recortado de las fotos grupales.`,
+    ],
+    alliance: [
+      `⚔️ ¡TRAICIÓN! ${P} rompió la alianza. Demostró menos lealtad que Tobe masacrando al perro en el juego de terror.`,
+      `⚔️ ALIANZA ROTA. ${P} se cagó en el contrato. Se merece un pelotazo de gay en la nuca.`,
+      `⚔️ ESCROW CONFISCADO. ${P} apuñaló a su aliado. Ni el Negro se animó a tanta maldad en Economía.`,
+      `⚔️ RUPTURA HOSTIL. ${P} rompió el pacto. Pinta hacerle la "putovuelta" de castigo para que aprenda.`,
+      `⚔️ ${P} traicionó a su socio. Tanta mujerfobia le terminó pudriendo los códigos.`,
+    ],
+  };
+
+  const options = insults[type];
+  if (!options) return '';
+  return getRandom(options);
+}
+
+// ─── Builder del mensaje Telegram ────────────────────────────────────────────
 function buildTelegramMessage(summary) {
   const { turn, trades = [], events = [], fmv_changes = {}, achievements = [] } = summary;
   const lines = [];
 
-  lines.push(`🏙️ *DISTRITO 77 · TURNO ${turn} RESUELTO*`);
+  // Intro: el chiste YA contiene el título
+  lines.push(getRandomInsult('intro'));
+  lines.push(`*Turno #${turn}*`);
   lines.push(`━━━━━━━━━━━━━━━━━━━`);
 
-  // Trades
+  // 📈 Trades
   if (trades.length > 0) {
     lines.push(`📈 *Trades ejecutados:* ${trades.length}`);
   }
@@ -49,10 +100,13 @@ function buildTelegramMessage(summary) {
     lines.push(`🚶 *${e.username}* pagó $${e.rent} de tránsito en _${e.corp}_`);
   }
 
-  // 💀 Bancarrotas
+  // 💀 Bancarrotas — con chiste interno
   const c11Events = events.filter(e => e.type === 'CHAPTER_11');
   for (const e of c11Events) {
-    lines.push(`💀 *${e.username || 'Un jugador'}* entró en Capítulo 11 (inyección $2,000)`);
+    const username = e.username || 'Un jugador';
+    lines.push('');
+    lines.push(getRandomInsult('broke', username));
+    lines.push(`  ↳ Inyección de emergencia: $2,000`);
   }
 
   // 🏆 Logros desbloqueados
