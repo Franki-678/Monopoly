@@ -74,6 +74,13 @@ async function route(request, method, path) {
       ORDER BY o.created_at DESC
     `;
 
+    // Last global event (from last resolved turn)
+    let lastGlobalEvent = null;
+    if (auditTurn > 0) {
+      const [logRow] = await sql`SELECT summary FROM turn_log WHERE turn_number = ${auditTurn}`;
+      if (logRow?.summary?.globalEvent) lastGlobalEvent = logRow.summary.globalEvent;
+    }
+
     return json({
       player: { ...player, liquid_cash: Number(player.liquid_cash), intellectual_capital: Number(player.intellectual_capital) },
       turn,
@@ -82,6 +89,7 @@ async function route(request, method, path) {
       audit,
       pendingOrders,
       auditTurn,
+      lastGlobalEvent,
     });
   }
 
@@ -89,7 +97,7 @@ async function route(request, method, path) {
   if (p === 'market' && method === 'GET') {
     const rows = await sql`
       SELECT c.id, c.name, c.district, c.tagline, c.fair_market_value, c.base_income, c.total_shares,
-        c.ceo_player_id,
+        c.board_position, c.ceo_player_id,
         (SELECT username FROM players WHERE id = c.ceo_player_id) AS ceo_name,
         COALESCE((SELECT SUM(shares) FROM shareholdings WHERE corporation_id = c.id), 0)::int AS owned_shares
       FROM corporations c

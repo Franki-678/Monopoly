@@ -21,6 +21,7 @@ import ActionReceipt from '@/components/ActionReceipt';
 import FlashOverlay from '@/components/FlashOverlay';
 import AlliancesTab from '@/components/AlliancesTab';
 import TechTreeTab from '@/components/TechTreeTab';
+import SurvivalGuide from '@/components/SurvivalGuide';
 
 // ── Utilidades ────────────────────────────────────────────────────────────────
 const fmt = (n) => {
@@ -67,9 +68,8 @@ function App() {
   const [loading,     setLoading]     = useState(false);
   const [showDice,    setShowDice]    = useState(false);
   const [flash,       setFlash]       = useState(null);
-  // ── Proyección de dado sobre el tablero ──
+  // ── Proyección de dado sobre el tablero (permanente hasta el próximo turno) ──
   const [projectedSquare, setProjectedSquare] = useState(null);
-  const projTimerRef = useRef(null);
   const prevTurnRef  = useRef(null);
 
   useEffect(() => {
@@ -112,11 +112,9 @@ function App() {
     return () => { if (interval) clearInterval(interval); };
   }, [player, loadAll]);
 
-  // Cuando el dado aterriza: iluminar celda 4 segundos
+  // Cuando el dado aterriza: iluminar la celda de forma permanente hasta el siguiente turno
   const handleRollComplete = useCallback(({ landing }) => {
-    if (projTimerRef.current) clearTimeout(projTimerRef.current);
     setProjectedSquare(landing);
-    projTimerRef.current = setTimeout(() => setProjectedSquare(null), 4500);
   }, []);
 
   const handleDiceClose = useCallback(() => {
@@ -177,10 +175,14 @@ function App() {
         state={state}
         loading={loading}
         setLoading={setLoading}
+        projectedSquare={projectedSquare}
         onOpenDice={() => setShowDice(true)}
         refresh={() => loadAll(player.id)}
         logout={logout}
       />
+
+      {/* Guía flotante — siempre disponible cuando hay jugador */}
+      <SurvivalGuide />
     </LiveBoard>
   );
 }
@@ -288,7 +290,7 @@ function LoginScreen({ onLogin }) {
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
-function Dashboard({ player, dashboard, market, players, state, refresh, logout, loading, setLoading, onOpenDice }) {
+function Dashboard({ player, dashboard, market, players, state, refresh, logout, loading, setLoading, onOpenDice, projectedSquare }) {
   if (!dashboard) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -297,7 +299,7 @@ function Dashboard({ player, dashboard, market, players, state, refresh, logout,
     );
   }
 
-  const { player: pData, turn, netWorth, portfolio, audit, pendingOrders, auditTurn } = dashboard;
+  const { player: pData, turn, netWorth, portfolio, audit, pendingOrders, auditTurn, lastGlobalEvent } = dashboard;
 
   const resolveTurn = async () => {
     if (!confirm(`¿Resolver turno ${turn}? Esto es irreversible.`)) return;
@@ -319,24 +321,44 @@ function Dashboard({ player, dashboard, market, players, state, refresh, logout,
       <header className="shrink-0 border-b border-zinc-900 bg-black/70 backdrop-blur-xl z-30 px-3 py-2">
         <div className="flex items-center justify-between gap-2">
           {/* Logo + estado */}
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center gap-2 min-w-0 overflow-hidden">
             <h1 className="text-lg font-black tracking-tighter shrink-0">
               D<span className="text-lime-400">77</span>
             </h1>
-            <div className="hidden sm:flex items-center gap-1.5 px-2 py-0.5 bg-zinc-900/80 rounded-full border border-zinc-800 text-[10px] font-mono">
-              <Flame className="h-2.5 w-2.5 text-orange-400" />
-              <span className="text-zinc-400">T<span className="text-lime-400 font-bold">{turn}</span></span>
-              <span className="text-zinc-700">·</span>
-              {(() => {
-                const pos = pData.board_position ?? 0;
-                const sq  = SQUARE_LABELS[pos];
+            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+              <div className="hidden sm:flex items-center gap-1.5 px-2 py-0.5 bg-zinc-900/80 rounded-full border border-zinc-800 text-[10px] font-mono">
+                <Flame className="h-2.5 w-2.5 text-orange-400" />
+                <span className="text-zinc-400">T<span className="text-lime-400 font-bold">{turn}</span></span>
+                <span className="text-zinc-700">·</span>
+                {(() => {
+                  const pos = pData.board_position ?? 0;
+                  const sq  = SQUARE_LABELS[pos];
+                  return (
+                    <span className={sq ? sq.cls + ' font-bold' : 'text-cyan-400 font-bold'}>
+                      📍{pos}{sq ? ' ' + sq.label : ''}
+                    </span>
+                  );
+                })()}
+                {state.locked && <Badge className="bg-red-500/20 text-red-400 text-[9px] ml-1">LOCK</Badge>}
+              </div>
+              {/* Indicador de aterrizaje del dado */}
+              {projectedSquare !== null && (() => {
+                const sq   = SQUARE_LABELS[projectedSquare];
+                const corp = market.find(c => c.board_position === projectedSquare);
+                const dest = sq ? sq.label : corp ? corp.name : `Casilla ${projectedSquare}`;
                 return (
-                  <span className={sq ? sq.cls + ' font-bold' : 'text-cyan-400 font-bold'}>
-                    📍{pos}{sq ? ' ' + sq.label : ''}
-                  </span>
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.85 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="flex items-center gap-1 px-2 py-0.5 bg-lime-400/15 border border-lime-400/50 rounded-full text-[10px] font-mono text-lime-300 shrink-0"
+                  >
+                    <span>🎲</span>
+                    <span className="font-bold text-lime-400">{projectedSquare}</span>
+                    <span className="text-lime-500">➔</span>
+                    <span className="truncate max-w-[80px]">{dest}</span>
+                  </motion.div>
                 );
               })()}
-              {state.locked && <Badge className="bg-red-500/20 text-red-400 text-[9px] ml-1">LOCK</Badge>}
             </div>
           </div>
 
@@ -425,6 +447,23 @@ function Dashboard({ player, dashboard, market, players, state, refresh, logout,
 
             {/* Daily */}
             <TabsContent value="dashboard" className="space-y-2 mt-2">
+              {/* Evento global del último turno */}
+              {lastGlobalEvent && (
+                <div className="bg-indigo-950/40 border border-indigo-500/40 rounded-xl p-3 flex items-start gap-3">
+                  <span className="text-2xl shrink-0 leading-none mt-0.5">🌐</span>
+                  <div className="min-w-0">
+                    <div className="font-black text-indigo-300 text-xs uppercase tracking-wider">{lastGlobalEvent.label}</div>
+                    <div className="text-[11px] text-indigo-400/80 mt-0.5">{lastGlobalEvent.desc}</div>
+                    {lastGlobalEvent.district && (
+                      <div className="text-[10px] font-mono text-indigo-500 mt-1">
+                        Zona afectada: <span className="text-indigo-300 font-bold">{lastGlobalEvent.district}</span>
+                        {' · '}{lastGlobalEvent.pct > 0 ? '+' : ''}{(lastGlobalEvent.pct * 100).toFixed(0)}% FMV
+                      </div>
+                    )}
+                    <div className="text-[9px] font-mono text-indigo-600 mt-1 uppercase">Turno #{auditTurn}</div>
+                  </div>
+                </div>
+              )}
               <div className="grid md:grid-cols-2 gap-2">
                 {/* Auditoría */}
                 <Card className="bg-zinc-950 border-zinc-900">

@@ -65,7 +65,7 @@ function getRandomInsult(type, playerName) {
 
 // ─── Builder del mensaje Telegram ────────────────────────────────────────────
 function buildTelegramMessage(summary) {
-  const { turn, trades = [], events = [], fmv_changes = {}, achievements = [] } = summary;
+  const { turn, trades = [], events = [], fmv_changes = {}, achievements = [], globalEvent } = summary;
   const lines = [];
 
   // Intro: el chiste YA contiene el título
@@ -114,6 +114,17 @@ function buildTelegramMessage(summary) {
     lines.push('');
     for (const a of achievements) {
       lines.push(`🏆 *¡LOGRO!* *${a.winnerName || a.winner}* → _${a.name || a.id}_`);
+    }
+  }
+
+  // 🌐 Evento global (si hubo)
+  if (globalEvent) {
+    lines.push('');
+    lines.push(`🌐 *EVENTO GLOBAL:* ${globalEvent.label}`);
+    lines.push(`  ↳ ${globalEvent.desc}`);
+    if (globalEvent.district) {
+      const pctStr = globalEvent.pct > 0 ? `+${(globalEvent.pct * 100).toFixed(0)}%` : `${(globalEvent.pct * 100).toFixed(0)}%`;
+      lines.push(`  ↳ Zona: *${globalEvent.district}* · FMV ${pctStr}`);
     }
   }
 
