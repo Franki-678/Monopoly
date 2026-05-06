@@ -21,6 +21,9 @@ import ActionReceipt from '@/components/ActionReceipt';
 import FlashOverlay from '@/components/FlashOverlay';
 import AlliancesTab from '@/components/AlliancesTab';
 import TechTreeTab from '@/components/TechTreeTab';
+import NissaiPanel from '@/components/NissaiPanel';
+import CasinoTab from '@/components/CasinoTab';
+import BountyBoard from '@/components/BountyBoard';
 import SurvivalGuide from '@/components/SurvivalGuide';
 
 // ── Utilidades ────────────────────────────────────────────────────────────────
@@ -429,15 +432,24 @@ function Dashboard({ player, dashboard, market, players, state, refresh, logout,
                 ['leaderboard','Ranking'],
                 ['alliances','Alianzas'],
                 ['tech','Tech'],
+                ['nissai','🥷'],
+                ['casino','🎰'],
+                ['bounty','🏴‍☠️'],
                 ...(pData.is_admin ? [['admin','Admin']] : []),
               ].map(([val,lbl]) => (
                 <TabsTrigger
                   key={val}
                   value={val}
-                  className={`flex-1 min-w-[48px] py-1 text-[10px] data-[state=active]:text-black ${
+                  className={`flex-1 min-w-[40px] py-1 text-[10px] data-[state=active]:text-black ${
                     val === 'tech' || val === 'admin'
                       ? 'data-[state=active]:bg-orange-400'
-                      : 'data-[state=active]:bg-lime-400'
+                      : val === 'nissai'
+                        ? 'data-[state=active]:bg-red-500 data-[state=active]:text-white'
+                        : val === 'casino'
+                          ? 'data-[state=active]:bg-purple-500 data-[state=active]:text-white'
+                          : val === 'bounty'
+                            ? 'data-[state=active]:bg-amber-500'
+                            : 'data-[state=active]:bg-lime-400'
                   }`}
                 >
                   {lbl}
@@ -664,6 +676,35 @@ function Dashboard({ player, dashboard, market, players, state, refresh, logout,
                 onChange={refresh}
               />
             </TabsContent>
+
+            {/* 🥷 El Rey Nissai */}
+            <TabsContent value="nissai" className="mt-2">
+              <NissaiPanel
+                player={player}
+                players={players}
+                market={market}
+                onChange={refresh}
+              />
+            </TabsContent>
+
+            {/* 🎰 Casino de Medianoche */}
+            <TabsContent value="casino" className="mt-2">
+              <CasinoTab
+                player={player}
+                liquidCash={Number(pData.liquid_cash)}
+                onChange={refresh}
+              />
+            </TabsContent>
+
+            {/* 🏴‍☠️ Bounty Board */}
+            <TabsContent value="bounty" className="mt-2">
+              <BountyBoard
+                player={player}
+                players={players}
+                liquidCash={Number(pData.liquid_cash)}
+                onChange={refresh}
+              />
+            </TabsContent>
           </Tabs>
         </div>
       </div>
@@ -727,6 +768,13 @@ function TxBadge({ type }) {
     ACHIEVEMENT:         { label: 'ACH',   cls: 'bg-amber-500/30  text-amber-200'  },
     TRANSIT_RENT:        { label: 'RENT',  cls: 'bg-rose-500/20   text-rose-300'   },
     TRANSIT_RENT_INCOME: { label: 'R+',    cls: 'bg-lime-500/20   text-lime-300'   },
+    NISSAI_COST:         { label: 'NSS',   cls: 'bg-red-500/20    text-red-300'    },
+    NISSAI_INCOME:       { label: 'NSS+',  cls: 'bg-red-500/30    text-red-200'    },
+    CASINO_BET:          { label: 'BET',   cls: 'bg-purple-500/20 text-purple-300' },
+    CASINO_WIN:          { label: 'WIN',   cls: 'bg-purple-500/30 text-purple-200' },
+    BOUNTY_LOCK:         { label: 'BNT',   cls: 'bg-amber-500/20  text-amber-300'  },
+    BOUNTY_WIN:          { label: 'BNT+',  cls: 'bg-amber-500/30  text-amber-200'  },
+    BOUNTY_REFUND:       { label: 'BREF',  cls: 'bg-zinc-700/40   text-zinc-400'   },
   };
   const m = map[type] || { label: type, cls: 'bg-zinc-800 text-zinc-400' };
   return (

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import sql from '@/lib/db';
 import { createSchema, seedIfEmpty } from '@/lib/schema';
-import { resolveTurn, getCurrentTurn, computeNetWorth, CONFIG, checkAndAwardAchievement } from '@/lib/gameLogic';
+import { resolveTurn, getCurrentTurn, computeNetWorth, CONFIG, checkAndAwardAchievement, NISSAI_CATALOG } from '@/lib/gameLogic';
 
 const json = (data, status = 200) => NextResponse.json(data, { status });
 const err = (message, status = 400) => NextResponse.json({ error: message }, { status });
@@ -389,6 +389,171 @@ async function route(request, method, path) {
   // --- CONFIG (for UI display) ---
   if (p === 'config' && method === 'GET') {
     return json({ config: CONFIG });
+  }
+
+  // ══════════════════════════════════════════════════════
+  // EL REY NISSAI — DARK MARKET
+  // ══════════════════════════════════════════════════════
+
+  // GET /api/nissai/:playerId — catalog + player's queued orders
+  if (p.startsWith('nissai/') && method === 'GET') {
+    const playerId = p.split('/')[1];
+    const turn = await getCurrentTurn();
+    const orders = await sql`
+      SELECT n.id, n.sabotage_type, n.status, n.result_note, n.created_at,
+        n.target_player_id, n.target_corp_id, n.cost_ic, n.cost_cash,
+        tp.username AS target_username,
+        tc.name AS target_corp_name
+      FROM nissai_orders n
+      LEFT JOIN players tp ON tp.id = n.target_player_id
+      LEFT JOIN corporations tc ON tc.id = n.target_corp_id
+      WHERE n.attacker_id = ${playerId} AND n.turn_number = ${turn}
+      ORDER BY n.created_at DESC
+    `;
+    const [player] = await sql`SELECT liquid_cash, intellectual_capital FROM players WHERE id = ${playerId}`;
+    return json({ catalog: NISSAI_CATALOG, orders, playerIc: Number(player?.intellectual_capital || 0), playerCash: Number(player?.liquid_cash || 0) });
+  }
+
+  // POST /api/nissai — place sabotage order
+  if (p === 'nissai' && method === 'POST') {
+    const { attacker_id, sabotage_type, target_player_id, target_corp_id } = await request.json();
+    const sab = NISSAI_CATALOG.find(s => s.id === sabotage_type);
+    if (!sab) return err('Tipo de sabotaje inválido');
+    if (sab.target === 'PLAYER' && !target_player_id) return err('Objetivo de jugador requerido');
+    if (sab.target === 'CORP'   && !target_corp_id)   return err('Objetivo de corporación requerido');
+    if (target_player_id && target_player_id === attacker_id) return err('No podés atacarte a vos mismo, gil');
+
+    const [attacker] = await sql`SELECT liquid_cash, intellectual_capital FROM players WHERE id = ${attacker_id}`;
+    if (!attacker) return err('Jugador no encontrado', 404);
+    if (sab.cost_ic   > 0 && Number(attacker.intellectual_capital) < sab.cost_ic)   return err(`IC insuficiente — necesitás ${sab.cost_ic} IC`);
+    if (sab.cost_cash > 0 && Number(attacker.liquid_cash)          < sab.cost_cash) return err(`Cash insuficiente — necesitás $${sab.cost_cash}`);
+
+    const turn = await getCurrentTurn();
+    if (sab.cost_ic > 0) {
+      await sql`UPDATE players SET intellectual_capital = intellectual_capital - ${sab.cost_ic} WHERE id = ${attacker_id}`;
+      await sql`INSERT INTO transactions (turn_number, player_id, tx_type, amount, description) VALUES (${turn}, ${attacker_id}, 'IC_GAIN', 0, ${'🥷 Nissai: ' + sab.name + ' (-' + sab.cost_ic + ' IC)'})`;
+    }
+    if (sab.cost_cash > 0) {
+      await sql`UPDATE players SET liquid_cash = liquid_cash - ${sab.cost_cash} WHERE id = ${attacker_id}`;
+      await sql`INSERT INTO transactions (turn_number, player_id, tx_type, amount, description) VALUES (${turn}, ${attacker_id}, 'SERVER_MAINTENANCE', ${-sab.cost_cash}, ${'🥷 Nissai: ' + sab.name + ' (-$' + sab.cost_cash + ')'})`;
+    }
+    await sql`
+      INSERT INTO nissai_orders (attacker_id, target_player_id, target_corp_id, sabotage_type, cost_ic, cost_cash, turn_number)
+      VALUES (${attacker_id}, ${target_player_id || null}, ${target_corp_id || null}, ${sabotage_type}, ${sab.cost_ic}, ${sab.cost_cash}, ${turn})
+    `;
+    return json({ ok: true, message: `${sab.emoji} ${sab.name} programado. El Rey Nissai aprueba.` });
+  }
+
+  // DELETE /api/nissai/:orderId — cancel pending order (refunds)
+  if (p.startsWith('nissai/') && method === 'DELETE') {
+    const orderId = p.split('/')[1];
+    const body = await request.json().catch(() => ({}));
+    const turn = await getCurrentTurn();
+    const [order] = await sql`SELECT * FROM nissai_orders WHERE id = ${orderId} AND status = 'PENDING' AND turn_number = ${turn}`;
+    if (!order) return err('Orden no encontrada o ya ejecutada', 404);
+    if (order.attacker_id !== body.player_id) return err('No autorizado', 403);
+    if (Number(order.cost_ic) > 0)   await sql`UPDATE players SET intellectual_capital = intellectual_capital + ${order.cost_ic}   WHERE id = ${order.attacker_id}`;
+    if (Number(order.cost_cash) > 0) await sql`UPDATE players SET liquid_cash          = liquid_cash          + ${order.cost_cash} WHERE id = ${order.attacker_id}`;
+    await sql`UPDATE nissai_orders SET status = 'CANCELLED' WHERE id = ${orderId}`;
+    return json({ ok: true });
+  }
+
+  // ══════════════════════════════════════════════════════
+  // CASINO DE MEDIANOCHE
+  // ══════════════════════════════════════════════════════
+
+  // GET /api/casino/:playerId — status
+  if (p.startsWith('casino/') && method === 'GET') {
+    const playerId = p.split('/')[1];
+    const turn = await getCurrentTurn();
+    const [currentBet] = await sql`SELECT * FROM casino_bets WHERE player_id = ${playerId} AND turn_number = ${turn}`;
+    const [lastResult] = await sql`SELECT * FROM casino_bets WHERE player_id = ${playerId} AND turn_number = ${turn - 1} AND resolved = TRUE`;
+    return json({ currentBet: currentBet || null, lastResult: lastResult || null });
+  }
+
+  // POST /api/casino — place bet
+  if (p === 'casino' && method === 'POST') {
+    const { player_id, bet_amount } = await request.json();
+    if (!player_id || !bet_amount) return err('Campos requeridos faltantes');
+    const [player] = await sql`SELECT liquid_cash FROM players WHERE id = ${player_id}`;
+    if (!player) return err('Jugador no encontrado', 404);
+    const cash   = Number(player.liquid_cash);
+    const amount = Number(bet_amount);
+    if (amount < 100)          return err('Apuesta mínima: $100');
+    if (amount > cash * 0.40)  return err(`Máximo: $${(cash * 0.40).toFixed(0)} (40% de tu cash)`);
+    if (amount > cash)         return err('Cash insuficiente');
+    const turn = await getCurrentTurn();
+    const [existing] = await sql`SELECT id FROM casino_bets WHERE player_id = ${player_id} AND turn_number = ${turn}`;
+    if (existing) return err('Ya apostaste este turno. Esperá a medianoche, ludópata.');
+    await sql`UPDATE players SET liquid_cash = liquid_cash - ${amount} WHERE id = ${player_id}`;
+    await sql`INSERT INTO transactions (turn_number, player_id, tx_type, amount, description) VALUES (${turn}, ${player_id}, 'CASINO', ${-amount}, ${'🎰 Apuesta Casino de Nissai (-$' + amount.toFixed(0) + ')'})`;
+    await sql`INSERT INTO casino_bets (player_id, turn_number, bet_amount) VALUES (${player_id}, ${turn}, ${amount})`;
+    return json({ ok: true, message: `🎰 $${amount.toFixed(0)} apostados. El dado cae a medianoche. Suerte, putito.` });
+  }
+
+  // ══════════════════════════════════════════════════════
+  // CONTRATOS DE BOUNTY P2P
+  // ══════════════════════════════════════════════════════
+
+  // GET /api/bounty — active bounties + player's contracts
+  if (p === 'bounty' && method === 'GET') {
+    const playerId = new URL(request.url).searchParams.get('player_id');
+    const active = await sql`
+      SELECT bc.*, pp.username AS poster_username, pp.avatar_color AS poster_color,
+        tp.username AS target_username, tp.avatar_color AS target_color, tp.bankrupt AS target_bankrupt
+      FROM bounty_contracts bc
+      JOIN players pp ON pp.id = bc.poster_id
+      JOIN players tp ON tp.id = bc.target_id
+      WHERE bc.status = 'ACTIVE'
+      ORDER BY bc.reward_cash DESC
+    `;
+    const mine = playerId ? await sql`
+      SELECT bc.*, tp.username AS target_username
+      FROM bounty_contracts bc
+      JOIN players tp ON tp.id = bc.target_id
+      WHERE bc.poster_id = ${playerId} AND bc.status IN ('ACTIVE','CLAIMED')
+      ORDER BY bc.created_at DESC LIMIT 20
+    ` : [];
+    return json({ active, mine });
+  }
+
+  // POST /api/bounty — place bounty
+  if (p === 'bounty' && method === 'POST') {
+    const { poster_id, target_id, reward_cash } = await request.json();
+    if (!poster_id || !target_id || !reward_cash) return err('Campos requeridos faltantes');
+    if (poster_id === target_id) return err('No podés ponerte un bounty a vos mismo');
+    const reward = Number(reward_cash);
+    if (reward < 200) return err('Bounty mínimo: $200');
+    const [poster] = await sql`SELECT liquid_cash FROM players WHERE id = ${poster_id}`;
+    if (!poster) return err('Jugador no encontrado', 404);
+    if (Number(poster.liquid_cash) < reward) return err('Cash insuficiente para el bounty');
+    const turn = await getCurrentTurn();
+    // Check no duplicate active bounty same poster+target
+    const [existing] = await sql`SELECT id FROM bounty_contracts WHERE poster_id = ${poster_id} AND target_id = ${target_id} AND status = 'ACTIVE'`;
+    if (existing) return err('Ya tenés un bounty activo en este objetivo. Esperá que expire o sé más creativo.');
+    await sql`UPDATE players SET liquid_cash = liquid_cash - ${reward} WHERE id = ${poster_id}`;
+    await sql`INSERT INTO transactions (turn_number, player_id, tx_type, amount, description) VALUES (${turn}, ${poster_id}, 'SERVER_MAINTENANCE', ${-reward}, ${'🏴‍☠️ Bounty colocado (-$' + reward.toFixed(0) + ')'})`;
+    const [newBounty] = await sql`
+      INSERT INTO bounty_contracts (poster_id, target_id, reward_cash, placed_at_turn)
+      VALUES (${poster_id}, ${target_id}, ${reward}, ${turn})
+      RETURNING id
+    `;
+    return json({ ok: true, id: newBounty.id, message: `🏴‍☠️ Bounty de $${reward.toFixed(0)} colocado. Se paga ×2 cuando el target vaya al Chapter 11.` });
+  }
+
+  // DELETE /api/bounty/:id — cancel active bounty (partial refund 50%)
+  if (p.startsWith('bounty/') && method === 'DELETE') {
+    const bountyId = p.split('/')[1];
+    const body = await request.json().catch(() => ({}));
+    const [bounty] = await sql`SELECT * FROM bounty_contracts WHERE id = ${bountyId} AND status = 'ACTIVE'`;
+    if (!bounty) return err('Bounty no encontrado o no activo', 404);
+    if (bounty.poster_id !== body.player_id) return err('No autorizado', 403);
+    const refund = Math.round(Number(bounty.reward_cash) * 0.50 * 100) / 100;
+    await sql`UPDATE players SET liquid_cash = liquid_cash + ${refund} WHERE id = ${bounty.poster_id}`;
+    const turn = await getCurrentTurn();
+    await sql`INSERT INTO transactions (turn_number, player_id, tx_type, amount, description) VALUES (${turn}, ${bounty.poster_id}, 'SERVER_MAINTENANCE', ${refund}, ${'🏴‍☠️ Bounty cancelado (reembolso 50%: +$' + refund.toFixed(0) + ')'})`;
+    await sql`UPDATE bounty_contracts SET status = 'CANCELLED' WHERE id = ${bountyId}`;
+    return json({ ok: true, refund });
   }
 
   return err('Ruta no encontrada: ' + p, 404);

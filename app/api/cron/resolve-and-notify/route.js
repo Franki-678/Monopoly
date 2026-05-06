@@ -64,8 +64,22 @@ function getRandomInsult(type, playerName) {
 }
 
 // ─── Builder del mensaje Telegram ────────────────────────────────────────────
+// ─── Insults para Nissai ──────────────────────────────────────────────────────
+function nissaiLine(r) {
+  const MSGS = {
+    AUDIT:    `🕵️ *${r.attacker}* auditó a *${r.target}* → −$${Number(r.amount || 0).toFixed(0)} de impuesto extra. Nadie es más chanta que vos, ${r.attacker}.`,
+    HACK:     `💻 *${r.attacker}* hackeó los servidores de *${r.target}* → le robó ${Number(r.amount || 0).toFixed(0)} IC. El darkweb no duerme.`,
+    BLACKOUT: `⚡ *${r.attacker}* cortó la luz en *${r.corp}* → −$${Number(r.totalDamage || 0).toFixed(0)} en dividendos anulados. El generador estaba en cuotas.`,
+    RUMOR:    r.corp
+      ? `📰 *${r.attacker}* esparció rumores sobre *${r.target}* → ${r.corp} cayó −10% FMV. Periodismo del bueno.`
+      : `📰 *${r.attacker}* intentó hundir a *${r.target}* pero no tiene corps. IC devuelto, se guardó la vergüenza.`,
+    FISCO:    `📋 *${r.attacker}* entregó a *${r.target}* al fisco → −3 turnos de exención. Judas tenía mejor marketing.`,
+  };
+  return MSGS[r.type] || '🥷 Sabotaje ejecutado';
+}
+
 function buildTelegramMessage(summary) {
-  const { turn, trades = [], events = [], fmv_changes = {}, achievements = [], globalEvent } = summary;
+  const { turn, trades = [], events = [], fmv_changes = {}, achievements = [], globalEvent, nissaiResults = [], casinoResults = [], bountyResults = [] } = summary;
   const lines = [];
 
   // Intro: el chiste YA contiene el título
@@ -114,6 +128,42 @@ function buildTelegramMessage(summary) {
     lines.push('');
     for (const a of achievements) {
       lines.push(`🏆 *¡LOGRO!* *${a.winnerName || a.winner}* → _${a.name || a.id}_`);
+    }
+  }
+
+  // 🥷 Mercado Negro — Nissai
+  if (nissaiResults.length > 0) {
+    lines.push('');
+    lines.push(`🥷 *MERCADO NEGRO — ${nissaiResults.length} sabotaje${nissaiResults.length > 1 ? 's' : ''} ejecutado${nissaiResults.length > 1 ? 's' : ''}:*`);
+    for (const r of nissaiResults) {
+      lines.push(`  ${nissaiLine(r)}`);
+    }
+  }
+
+  // 🎰 Casino de Medianoche
+  if (casinoResults.length > 0) {
+    lines.push('');
+    lines.push(`🎰 *CASINO DE MEDIANOCHE:*`);
+    for (const r of casinoResults) {
+      const resultEmoji = r.result === 'JACKPOT' ? '💰' : r.result === 'WIN' ? '✅' : r.result === 'SMALL_WIN' ? '🟡' : '💀';
+      const net         = Number(r.payout) - Number(r.bet_amount);
+      const profitStr   = net >= 0
+        ? `+$${net.toFixed(0)} neto`
+        : `-$${Math.abs(net).toFixed(0)}`;
+      lines.push(`  ${resultEmoji} *${r.username}* — ${r.result} · apostó $${Number(r.bet_amount).toFixed(0)} → ${profitStr}`);
+    }
+  }
+
+  // 🏴‍☠️ Bounty Board
+  if (bountyResults.length > 0) {
+    lines.push('');
+    lines.push(`🏴‍☠️ *BOUNTY BOARD:*`);
+    for (const r of bountyResults) {
+      if (r.type === 'CLAIMED') {
+        lines.push(`  💰 *${r.winner}* cobró la recompensa por hundir a *${r.target}* → +$${Number(r.reward).toFixed(0)}`);
+      } else if (r.type === 'EXPIRED') {
+        lines.push(`  ⏰ Bounty sobre *${r.target}* venció sin cobrarse. Dinero devuelto.`);
+      }
     }
   }
 
