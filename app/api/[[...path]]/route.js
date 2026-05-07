@@ -29,9 +29,24 @@ async function route(request, method, path) {
   if (p === 'auth/login' && method === 'POST') {
     const { username, pin } = await request.json();
     if (!username || !pin) return err('Usuario y PIN requeridos');
-    const [player] = await sql`SELECT id, username, is_admin, avatar_color, player_role, board_position FROM players WHERE username = ${username.toUpperCase()} AND pin = ${pin}`;
+    const [player] = await sql`
+      SELECT id, username, is_admin, avatar_color, player_role, board_position, must_change_pin
+      FROM players
+      WHERE username = ${username.toUpperCase()} AND pin = ${pin}
+    `;
     if (!player) return err('Credenciales inválidas', 401);
-    return json({ player });
+    return json({ player, must_change_pin: !!player.must_change_pin });
+  }
+
+  if (p === 'auth/change-pin' && method === 'POST') {
+    const { player_id, current_pin, new_pin } = await request.json();
+    if (!player_id || !current_pin || !new_pin) return err('Faltan campos');
+    if (!/^\d{4}$/.test(new_pin)) return err('El PIN debe ser exactamente 4 dígitos numéricos');
+    const [player] = await sql`SELECT id, pin FROM players WHERE id = ${player_id} AND pin = ${current_pin}`;
+    if (!player) return err('PIN actual incorrecto', 401);
+    if (current_pin === new_pin) return err('El nuevo PIN debe ser diferente al actual');
+    await sql`UPDATE players SET pin = ${new_pin}, must_change_pin = FALSE WHERE id = ${player_id}`;
+    return json({ ok: true });
   }
 
   // --- GAME STATE ---

@@ -14,7 +14,7 @@ import {
   Loader2, LogOut, Zap, TrendingUp, TrendingDown, Wallet, Building2, Crown,
   ShoppingCart, History, Flame, Skull, ShieldAlert, Dices,
   Home, BarChart2, Target, Users, FlaskConical, AlertTriangle,
-  ChevronDown, ChevronRight, Settings,
+  ChevronDown, ChevronRight, Settings, KeyRound, ShieldCheck,
 } from 'lucide-react';
 import LiveBoard from '@/components/LiveBoard';
 import DiceModal from '@/components/DiceModal';
@@ -77,24 +77,29 @@ const ROLE_LABELS = {
 
 // ── App root ──────────────────────────────────────────────────────────────────
 function App() {
-  const [player,         setPlayer]         = useState(null);
-  const [initLoading,    setInitLoading]    = useState(true);
-  const [dashboard,      setDashboard]      = useState(null);
-  const [market,         setMarket]         = useState([]);
-  const [players,        setPlayers]        = useState([]);
-  const [state,          setState]          = useState({ current_turn: 1, locked: false });
-  const [loading,        setLoading]        = useState(false);
-  const [showDice,       setShowDice]       = useState(false);
-  const [flash,          setFlash]          = useState(null);
+  const [player,          setPlayer]          = useState(null);
+  const [mustChangePin,   setMustChangePin]   = useState(false);
+  const [initLoading,     setInitLoading]     = useState(true);
+  const [dashboard,       setDashboard]       = useState(null);
+  const [market,          setMarket]          = useState([]);
+  const [players,         setPlayers]         = useState([]);
+  const [state,           setState]           = useState({ current_turn: 1, locked: false });
+  const [loading,         setLoading]         = useState(false);
+  const [showDice,        setShowDice]        = useState(false);
+  const [flash,           setFlash]           = useState(null);
   const [projectedSquare, setProjectedSquare] = useState(null);
-  const [clickedSquare,  setClickedSquare]  = useState(null);
+  const [clickedSquare,   setClickedSquare]   = useState(null);
   const prevTurnRef = useRef(null);
 
   useEffect(() => {
     (async () => {
       try { await api('init', { method: 'POST' }); } catch (e) { console.error('Init', e); }
       const saved = typeof window !== 'undefined' ? localStorage.getItem('d77_player') : null;
-      if (saved) setPlayer(JSON.parse(saved));
+      if (saved) {
+        const p = JSON.parse(saved);
+        if (p.must_change_pin) { setPlayer(p); setMustChangePin(true); }
+        else setPlayer(p);
+      }
       setInitLoading(false);
     })();
   }, []);
@@ -131,7 +136,8 @@ function App() {
   const handleDiceClose    = useCallback(() => { setShowDice(false); }, []);
   const logout = useCallback(() => {
     localStorage.removeItem('d77_player');
-    setPlayer(null); setDashboard(null); setProjectedSquare(null); setClickedSquare(null);
+    setPlayer(null); setMustChangePin(false); setDashboard(null);
+    setProjectedSquare(null); setClickedSquare(null);
     prevTurnRef.current = null;
   }, []);
 
@@ -153,7 +159,30 @@ function App() {
   if (!player) {
     return (
       <LiveBoard>
-        <LoginScreen onLogin={(p) => { localStorage.setItem('d77_player', JSON.stringify(p)); setPlayer(p); prevTurnRef.current = null; }} />
+        <LoginScreen onLogin={(p, needsPin) => {
+          const stored = { ...p, must_change_pin: needsPin };
+          localStorage.setItem('d77_player', JSON.stringify(stored));
+          setPlayer(stored);
+          setMustChangePin(!!needsPin);
+          prevTurnRef.current = null;
+        }} />
+      </LiveBoard>
+    );
+  }
+
+  if (mustChangePin) {
+    return (
+      <LiveBoard>
+        <ChangePinScreen
+          player={player}
+          onSuccess={() => {
+            const updated = { ...player, must_change_pin: false };
+            localStorage.setItem('d77_player', JSON.stringify(updated));
+            setPlayer(updated);
+            setMustChangePin(false);
+          }}
+          onLogout={logout}
+        />
       </LiveBoard>
     );
   }
@@ -202,9 +231,10 @@ function LoginScreen({ onLogin }) {
     e.preventDefault();
     setLoading(true);
     try {
-      const { player } = await api('auth/login', { method: 'POST', body: JSON.stringify({ username, pin }) });
-      toast.success(`Bienvenido ${player.username}`);
-      onLogin(player);
+      const res = await api('auth/login', { method: 'POST', body: JSON.stringify({ username, pin }) });
+      const needsPin = !!res.must_change_pin;
+      toast.success(needsPin ? `Bienvenido ${res.player.username} — cambiá tu PIN` : `Bienvenido ${res.player.username}`);
+      onLogin(res.player, needsPin);
     } catch (e) { toast.error(e.message); } finally { setLoading(false); }
   };
 
@@ -214,7 +244,7 @@ function LoginScreen({ onLogin }) {
         <div className="mb-6 text-center">
           <div className="inline-flex items-center gap-2 px-3 py-1 border border-lime-400/40 bg-lime-400/10 rounded-full mb-3">
             <div className="w-2 h-2 bg-lime-400 rounded-full animate-pulse" />
-            <span className="text-[10px] font-mono uppercase tracking-widest text-lime-300">Live Server · 7 Players</span>
+            <span className="text-[10px] font-mono uppercase tracking-widest text-lime-300">Live Server · 6 Players</span>
           </div>
           <h1 className="text-5xl font-black tracking-tighter text-white leading-none">DISTRITO<span className="text-lime-400">77</span></h1>
           <p className="text-zinc-500 font-mono text-[10px] uppercase tracking-widest mt-1">Persistent Browser Game · WEGO System</p>
@@ -228,7 +258,7 @@ function LoginScreen({ onLogin }) {
             <form onSubmit={submit} className="space-y-3">
               <div>
                 <Label className="text-zinc-400 font-mono text-[10px] uppercase">Alias</Label>
-                <Input className="bg-black border-zinc-800 text-white font-mono uppercase tracking-wider focus-visible:ring-lime-400" value={username} onChange={e => setUsername(e.target.value)} placeholder="FRANKI" required />
+                <Input className="bg-black border-zinc-800 text-white font-mono uppercase tracking-wider focus-visible:ring-lime-400" value={username} onChange={e => setUsername(e.target.value.toUpperCase())} placeholder="FRANCO" required />
               </div>
               <div>
                 <Label className="text-zinc-400 font-mono text-[10px] uppercase">PIN</Label>
@@ -241,11 +271,123 @@ function LoginScreen({ onLogin }) {
             <div className="mt-4 pt-3 border-t border-zinc-800">
               <p className="text-[9px] font-mono uppercase text-zinc-600 mb-1.5">// Roster</p>
               <div className="flex flex-wrap gap-x-2 gap-y-1 text-[9px] font-mono text-zinc-500">
-                {[['FRANKI','0814'],['CECE','1234'],['TOBE','5678'],['SANTI','9012'],['BEN','3456'],['MANU','7890'],['RETA','2468']].map(([u,p]) => (
-                  <button key={u} type="button" className="hover:text-lime-400 transition-colors" onClick={() => { setUsername(u); setPin(p); }}>{u}</button>
+                {['FRANCO','RETA','CECE','TOBE','BEEN','MANU'].map(u => (
+                  <button key={u} type="button" className="hover:text-lime-400 transition-colors" onClick={() => { setUsername(u); setPin('0000'); }}>{u}</button>
                 ))}
               </div>
             </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// ── Change PIN Screen ─────────────────────────────────────────────────────────
+function ChangePinScreen({ player, onSuccess, onLogout }) {
+  const [currentPin, setCurrentPin] = useState('');
+  const [newPin,     setNewPin]     = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
+  const [loading,    setLoading]    = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (newPin.length !== 4) return toast.error('El nuevo PIN debe tener exactamente 4 dígitos');
+    if (newPin !== confirmPin) return toast.error('Los PINs no coinciden');
+    if (newPin === currentPin) return toast.error('El nuevo PIN debe ser diferente al actual');
+    setLoading(true);
+    try {
+      await api('auth/change-pin', {
+        method: 'POST',
+        body: JSON.stringify({ player_id: player.id, current_pin: currentPin, new_pin: newPin }),
+      });
+      toast.success('PIN actualizado. ¡Bienvenido al Distrito!');
+      onSuccess();
+    } catch (e) { toast.error(e.message); } finally { setLoading(false); }
+  };
+
+  return (
+    <div className="h-full overflow-y-auto flex items-center justify-center px-4 py-6">
+      <div className="w-full max-w-sm">
+        <div className="mb-6 text-center">
+          <div className="inline-flex items-center gap-2 px-3 py-1 border border-orange-400/40 bg-orange-400/10 rounded-full mb-3">
+            <KeyRound className="h-3 w-3 text-orange-400" />
+            <span className="text-[10px] font-mono uppercase tracking-widest text-orange-300">Seguridad obligatoria</span>
+          </div>
+          <h2 className="text-4xl font-black tracking-tighter text-white leading-none">NUEVO <span className="text-orange-400">PIN</span></h2>
+          <p className="text-zinc-500 font-mono text-[10px] uppercase tracking-widest mt-1">Cambiá tu PIN antes de continuar</p>
+        </div>
+
+        <Card className="bg-zinc-950/90 backdrop-blur border-orange-500/30">
+          <CardHeader className="pb-2">
+            <div className="flex items-center gap-2 mb-1">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center font-black text-black text-sm shrink-0" style={{ backgroundColor: player.avatar_color || '#a3e635' }}>
+                {(player.username || '?')[0]}
+              </div>
+              <div>
+                <div className="text-white font-bold text-sm">{player.username}</div>
+                <div className="text-zinc-500 text-[10px] font-mono uppercase">Primera vez en el sistema</div>
+              </div>
+            </div>
+            <div className="flex items-start gap-2 bg-orange-950/40 border border-orange-500/30 rounded-lg p-2.5 mt-1">
+              <ShieldCheck className="h-3.5 w-3.5 text-orange-400 shrink-0 mt-0.5" />
+              <p className="text-[10px] text-orange-300/90 leading-relaxed">
+                Tu PIN temporal es <span className="font-black text-orange-200 tracking-widest">0000</span>. Por seguridad, tenés que cambiarlo ahora. Este PIN es personal — no lo compartas.
+              </p>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={submit} className="space-y-3">
+              <div>
+                <Label className="text-zinc-400 font-mono text-[10px] uppercase">PIN temporal (0000)</Label>
+                <Input
+                  className="bg-black border-zinc-800 text-white font-mono tracking-[0.5em] text-center focus-visible:ring-orange-400"
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={4}
+                  value={currentPin}
+                  onChange={e => setCurrentPin(e.target.value.replace(/\D/g, ''))}
+                  placeholder="••••"
+                  required
+                />
+              </div>
+              <div>
+                <Label className="text-zinc-400 font-mono text-[10px] uppercase">Nuevo PIN (4 dígitos)</Label>
+                <Input
+                  className="bg-black border-zinc-800 text-white font-mono tracking-[0.5em] text-center focus-visible:ring-orange-400"
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={4}
+                  value={newPin}
+                  onChange={e => setNewPin(e.target.value.replace(/\D/g, ''))}
+                  placeholder="••••"
+                  required
+                />
+              </div>
+              <div>
+                <Label className="text-zinc-400 font-mono text-[10px] uppercase">Confirmá el nuevo PIN</Label>
+                <Input
+                  className={`bg-black border-zinc-800 text-white font-mono tracking-[0.5em] text-center focus-visible:ring-orange-400 ${confirmPin && confirmPin !== newPin ? 'border-red-500/60' : confirmPin && confirmPin === newPin ? 'border-lime-500/60' : ''}`}
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={4}
+                  value={confirmPin}
+                  onChange={e => setConfirmPin(e.target.value.replace(/\D/g, ''))}
+                  placeholder="••••"
+                  required
+                />
+              </div>
+              <Button
+                type="submit"
+                disabled={loading || newPin.length !== 4 || newPin !== confirmPin}
+                className="w-full bg-orange-400 hover:bg-orange-300 text-black font-bold uppercase tracking-wider h-11"
+              >
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <><KeyRound className="h-4 w-4 mr-2" />Establecer PIN y Entrar</>}
+              </Button>
+            </form>
+            <button onClick={onLogout} className="w-full mt-3 text-[9px] font-mono uppercase text-zinc-600 hover:text-zinc-400 transition-colors">
+              Volver al login
+            </button>
           </CardContent>
         </Card>
       </div>
