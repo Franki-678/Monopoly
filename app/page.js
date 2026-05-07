@@ -474,7 +474,7 @@ function Dashboard({ player, dashboard, market, players, state, refresh, logout,
             const { level, pct, next } = levelProgress(totalIcSpent);
             return (
               <div className="space-y-1.5">
-                <div className="grid grid-cols-4 gap-1.5">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
                   <KpiCard label="NW"    value={fmt(netWorth)}                                                         icon={<TrendingUp className="h-3 w-3" />} accent="lime"   />
                   <KpiCard label="Cash"  value={fmt(pData.liquid_cash)}                                                icon={<Wallet     className="h-3 w-3" />} accent="cyan"   />
                   <KpiCard label="IC"    value={Math.round(pData.intellectual_capital).toLocaleString('es-AR') + ' IC'} icon={<Zap       className="h-3 w-3" />} accent="orange" />
@@ -551,10 +551,26 @@ function Dashboard({ player, dashboard, market, players, state, refresh, logout,
             />
           )}
           {section === 'pactos' && (
-            <AlliancesTab player={player} players={players} liquidCash={Number(pData.liquid_cash)} onChange={refresh} />
+            <div className="space-y-2">
+              <div className="flex items-start gap-2 bg-zinc-900/40 border border-orange-900/30 rounded-lg px-3 py-2">
+                <span className="text-base leading-none shrink-0 mt-0.5">🤝</span>
+                <p className="text-[10px] text-zinc-500 leading-relaxed">
+                  Al activar una alianza, ambos bloquean X% de su cash como <span className="text-orange-400">garantía mutua</span>. Quien rompe la alianza pierde el escrow a favor del otro. Incentivo real de cooperación.
+                </p>
+              </div>
+              <AlliancesTab player={player} players={players} liquidCash={Number(pData.liquid_cash)} onChange={refresh} />
+            </div>
           )}
           {section === 'lab' && (
-            <TechTreeTab player={player} ic={Number(pData.intellectual_capital)} onChange={refresh} />
+            <div className="space-y-2">
+              <div className="flex items-start gap-2 bg-zinc-900/40 border border-purple-900/30 rounded-lg px-3 py-2">
+                <span className="text-base leading-none shrink-0 mt-0.5">🧪</span>
+                <p className="text-[10px] text-zinc-500 leading-relaxed">
+                  Gastá <span className="text-orange-400">IC</span> en nodos del árbol tecnológico. El primero que desbloquea tiene <span className="text-lime-400">Patente exclusiva</span> por 10 turnos. Después se abre para todos a 25% del costo original.
+                </p>
+              </div>
+              <TechTreeTab player={player} ic={Number(pData.intellectual_capital)} onChange={refresh} />
+            </div>
           )}
           {section === 'admin' && pData.is_admin && (
             <AdminSection state={state} resolveTurn={resolveTurn} loading={loading} turn={turn} />
@@ -854,17 +870,25 @@ function MercadoSection({ tab, setTab, market, player, portfolio, turn, refresh,
       </div>
 
       {tab === 'market' && (
-        <SmartMarketTab market={market} player={player} portfolio={portfolio} turn={turn} refresh={refresh} />
+        <SmartMarketTab market={market} player={player} portfolio={portfolio} turn={turn} refresh={refresh} playerLevel={computeLevel(Number(pData.total_ic_spent || 0))} />
       )}
       {tab === 'portfolio' && (
-        <PortfolioSection portfolio={portfolio} market={market} player={player} turn={turn} refresh={refresh} />
+        <div className="space-y-2">
+          <div className="flex items-start gap-2 bg-zinc-900/40 border border-zinc-800 rounded-lg px-3 py-2">
+            <span className="text-base leading-none shrink-0 mt-0.5">💼</span>
+            <p className="text-[10px] text-zinc-500 leading-relaxed">
+              Tus posiciones actuales. El <span className="text-lime-400">net/turno</span> = dividendo − mantenimiento. Holdings en <span className="text-red-400">rojo</span> te están costando plata — considerá vender.
+            </p>
+          </div>
+          <PortfolioSection portfolio={portfolio} market={market} player={player} turn={turn} refresh={refresh} />
+        </div>
       )}
     </div>
   );
 }
 
 // ── Smart Market Tab ──────────────────────────────────────────────────────────
-function SmartMarketTab({ market, player, portfolio, turn, refresh }) {
+function SmartMarketTab({ market, player, portfolio, turn, refresh, playerLevel = 1 }) {
   const [filter, setFilter] = useState('all'); // 'all' | 'hot' | 'mine'
   const [expanded, setExpanded] = useState(null);
 
@@ -875,16 +899,25 @@ function SmartMarketTab({ market, player, portfolio, turn, refresh }) {
     .sort((a, b) => b.score - a.score || Number(b.fair_market_value) - Number(a.fair_market_value));
 
   const filtered = scored.filter(c => {
-    if (filter === 'hot')  return c.score >= 4;
-    if (filter === 'mine') return myCorpIds.has(c.id);
+    if (filter === 'hot')    return c.score >= 4;
+    if (filter === 'mine')   return myCorpIds.has(c.id);
+    if (filter === 'locked') return Number(c.required_level || 0) > 1;
     return true;
   });
 
   return (
     <div className="space-y-2">
+      {/* Market description */}
+      <div className="flex items-start gap-2 bg-zinc-900/40 border border-zinc-800 rounded-lg px-3 py-2">
+        <span className="text-base leading-none shrink-0 mt-0.5">📈</span>
+        <p className="text-[10px] text-zinc-500 leading-relaxed">
+          Comprá acciones para recibir <span className="text-lime-400">dividendos</span> cada turno. Spread del <span className="text-orange-400">3%</span> en compra y venta. Corps de nivel alto requieren IC invertido para acceder.
+        </p>
+      </div>
+
       {/* Filter pills */}
       <div className="flex gap-1.5">
-        {[['all','Todos'],['hot','🔥 Hot'],['mine','Mis corps']].map(([id, label]) => (
+        {[['all','Todos'],['hot','🔥 Hot'],['mine','Mis corps'],['locked','🔒 Avanzadas']].map(([id, label]) => (
           <button
             key={id}
             onClick={() => setFilter(id)}
@@ -904,6 +937,7 @@ function SmartMarketTab({ market, player, portfolio, turn, refresh }) {
             isExpanded={expanded === corp.id}
             onToggle={() => setExpanded(e => e === corp.id ? null : corp.id)}
             refresh={refresh}
+            playerLevel={playerLevel}
           />
         ))}
       </div>
@@ -912,20 +946,25 @@ function SmartMarketTab({ market, player, portfolio, turn, refresh }) {
 }
 
 // ── Smart Corp Card ───────────────────────────────────────────────────────────
-function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh }) {
+function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh, playerLevel = 1 }) {
   const [loading,    setLoading]    = useState(null);
   const [customQty,  setCustomQty]  = useState('');
   const [orderType,  setOrderType]  = useState('BUY_SHARES');
 
-  const sharePrice = Number(corp.fair_market_value) / 100;
-  const buyPrice   = sharePrice * 1.03;
-  const sellPrice  = sharePrice * 0.97;
-  const supply     = (corp.total_shares || 100) - (corp.owned_shares || 0);
-  const isCeo      = corp.ceo_player_id === player.id;
+  const sharePrice    = Number(corp.fair_market_value) / 100;
+  const buyPrice      = sharePrice * 1.03;
+  const sellPrice     = sharePrice * 0.97;
+  const supply        = (corp.total_shares || 100) - (corp.owned_shares || 0);
+  const isCeo         = corp.ceo_player_id === player.id;
+  const reqLevel      = Number(corp.required_level || 0);
+  const isLevelLocked = reqLevel > 1 && playerLevel < reqLevel;
 
   const placeOrder = async (type, qty) => {
     const q = parseInt(qty, 10);
     if (!q || q <= 0) return toast.error('Cantidad inválida');
+    if (isLevelLocked) return toast.error(`Requiere Nivel ${reqLevel} — tu nivel actual es ${playerLevel}`);
+    if (type === 'SELL_SHARES' && myShares < q) return toast.error(`Solo tenés ${myShares} acciones`);
+    if (type === 'BUY_SHARES'  && supply  < q) return toast.error(`Solo hay ${supply} acciones disponibles`);
     setLoading(`${type}-${q}`);
     try {
       await api('orders', {
@@ -940,16 +979,19 @@ function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh }
   };
 
   return (
-    <motion.div layout className="bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden">
+    <motion.div layout className={`bg-zinc-950 border rounded-xl overflow-hidden ${isLevelLocked ? 'border-zinc-800 opacity-75' : 'border-zinc-800'}`}>
       {/* Card header — always visible */}
       <button onClick={onToggle} className="w-full text-left p-3 hover:bg-zinc-900/40 transition-colors">
         <div className="flex items-start gap-2">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="font-bold text-sm text-white">{corp.name}</span>
+              <span className={`font-bold text-sm ${isLevelLocked ? 'text-zinc-500' : 'text-white'}`}>{corp.name}</span>
               {isCeo && <Crown className="h-3 w-3 text-orange-400 shrink-0" />}
-              <Badge className="bg-zinc-800 text-zinc-400 border-0 text-[8px] font-mono shrink-0">{corp.district}</Badge>
-              {myShares > 0 && <Badge className="bg-lime-500/15 text-lime-400 border-lime-500/30 text-[8px] font-mono shrink-0">{myShares} sh</Badge>}
+              {isLevelLocked
+                ? <Badge className="bg-red-500/15 text-red-400 border-red-500/25 border text-[8px] font-mono shrink-0">🔒 Req. L{reqLevel}</Badge>
+                : <Badge className="bg-zinc-800 text-zinc-400 border-0 text-[8px] font-mono shrink-0">{corp.district}</Badge>
+              }
+              {!isLevelLocked && myShares > 0 && <Badge className="bg-lime-500/15 text-lime-400 border-lime-500/30 text-[8px] font-mono shrink-0">{myShares} sh</Badge>}
             </div>
             <div className="flex items-center gap-2 mt-1 flex-wrap">
               {/* Score flames */}
@@ -981,18 +1023,32 @@ function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh }
             className="overflow-hidden"
           >
             <div className="px-3 pb-3 space-y-2.5 border-t border-zinc-900">
+              {/* Level lock banner */}
+              {isLevelLocked && (
+                <div className="pt-2.5">
+                  <div className="flex items-center gap-2 bg-red-950/30 border border-red-500/25 rounded-lg px-3 py-2">
+                    <span className="text-base leading-none">🔒</span>
+                    <div>
+                      <p className="text-[10px] font-bold text-red-400 uppercase">Nivel {reqLevel} requerido</p>
+                      <p className="text-[9px] text-red-400/70">Tu nivel: {playerLevel}. Gastá más IC en el Lab para desbloquear.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Quick BUY */}
               <div className="pt-2.5">
                 <div className="text-[8px] font-mono uppercase text-zinc-500 mb-1.5 flex items-center gap-1">
                   <TrendingUp className="h-2.5 w-2.5 text-lime-400" /> Comprar rápido
+                  <span className="text-zinc-700 ml-1">· spread +3%</span>
                 </div>
                 <div className="grid grid-cols-3 gap-1.5">
                   {[5, 10, 25].map(qty => (
                     <button
                       key={qty}
                       onClick={() => placeOrder('BUY_SHARES', qty)}
-                      disabled={!!loading || supply < qty}
-                      className="flex flex-col items-center py-2 px-1 bg-lime-400/10 hover:bg-lime-400/20 border border-lime-500/30 rounded-lg text-lime-300 disabled:opacity-40 transition-colors"
+                      disabled={!!loading || supply < qty || isLevelLocked}
+                      className="flex flex-col items-center py-2 px-1 bg-lime-400/10 hover:bg-lime-400/20 border border-lime-500/30 rounded-lg text-lime-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                     >
                       <span className="text-xs font-black">+{qty}</span>
                       <span className="text-[8px] font-mono opacity-70">~{fmt(Math.round(qty * buyPrice))}</span>
@@ -1031,11 +1087,14 @@ function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh }
                   className="bg-zinc-900 border border-zinc-800 text-white text-[9px] font-mono rounded-lg px-2 h-8 shrink-0"
                 >
                   <option value="BUY_SHARES">Comprar</option>
-                  <option value="SELL_SHARES">Vender</option>
+                  <option value="SELL_SHARES" disabled={myShares === 0}>
+                    Vender{myShares === 0 ? ' (sin acc.)' : ''}
+                  </option>
                 </select>
                 <Input
                   type="number"
                   min="1"
+                  max={orderType === 'SELL_SHARES' ? myShares : supply}
                   value={customQty}
                   onChange={e => setCustomQty(e.target.value)}
                   placeholder="Cant."
@@ -1043,7 +1102,7 @@ function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh }
                 />
                 <Button
                   onClick={() => placeOrder(orderType, customQty)}
-                  disabled={!!loading || !customQty}
+                  disabled={!!loading || !customQty || isLevelLocked || (orderType === 'SELL_SHARES' && myShares === 0)}
                   size="sm"
                   className={`shrink-0 h-8 font-bold text-xs px-3 ${orderType === 'BUY_SHARES' ? 'bg-lime-400 hover:bg-lime-300 text-black' : 'bg-red-700 hover:bg-red-600 text-white'}`}
                 >
@@ -1053,7 +1112,7 @@ function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh }
 
               {/* Banda de precio info */}
               <p className="text-[8px] font-mono text-zinc-600">
-                Banda: {fmt(Number(corp.fair_market_value) * 0.5)} – {fmt(Number(corp.fair_market_value) * 2.5)}
+                Banda: {fmt(Number(corp.fair_market_value) * 0.5)} – {fmt(Number(corp.fair_market_value) * 2.5)} · Sell spread -3%
               </p>
             </div>
           </motion.div>
@@ -1170,9 +1229,39 @@ function ArenaSection({ tab, setTab, player, players, market, pData, refresh }) 
           >{t.label}</button>
         ))}
       </div>
-      {tab === 'nissai' && <NissaiPanel player={player} players={players} market={market} onChange={refresh} />}
-      {tab === 'casino' && <CasinoTab player={player} liquidCash={Number(pData.liquid_cash)} onChange={refresh} />}
-      {tab === 'bounty' && <BountyBoard player={player} players={players} liquidCash={Number(pData.liquid_cash)} onChange={refresh} />}
+      {tab === 'nissai' && (
+        <div className="space-y-2">
+          <div className="flex items-start gap-2 bg-zinc-900/40 border border-red-900/30 rounded-lg px-3 py-2">
+            <span className="text-base leading-none shrink-0 mt-0.5">🥷</span>
+            <p className="text-[10px] text-zinc-500 leading-relaxed">
+              Sabotajes anónimos que se ejecutan en la resolución del turno. Podés <span className="text-red-400">destruir corps rivales</span>, robar IC o bloquear dividendos. Sin rastreo. El Rey no habla.
+            </p>
+          </div>
+          <NissaiPanel player={player} players={players} market={market} onChange={refresh} />
+        </div>
+      )}
+      {tab === 'casino' && (
+        <div className="space-y-2">
+          <div className="flex items-start gap-2 bg-zinc-900/40 border border-purple-900/30 rounded-lg px-3 py-2">
+            <span className="text-base leading-none shrink-0 mt-0.5">🎰</span>
+            <p className="text-[10px] text-zinc-500 leading-relaxed">
+              <span className="text-purple-400">1 apuesta por turno</span> · máx 40% de tu cash · <span className="text-red-400">60% LOSE</span> · <span className="text-lime-400">18% ×2</span> · <span className="text-cyan-400">18% +50%</span> · <span className="text-orange-400">4% JACKPOT ×5</span>. Resultados a medianoche.
+            </p>
+          </div>
+          <CasinoTab player={player} liquidCash={Number(pData.liquid_cash)} onChange={refresh} />
+        </div>
+      )}
+      {tab === 'bounty' && (
+        <div className="space-y-2">
+          <div className="flex items-start gap-2 bg-zinc-900/40 border border-amber-900/30 rounded-lg px-3 py-2">
+            <span className="text-base leading-none shrink-0 mt-0.5">🏴‍☠️</span>
+            <p className="text-[10px] text-zinc-500 leading-relaxed">
+              Poné precio a la cabeza de un rival. Si van al <span className="text-red-400">Chapter 11</span> mientras el bounty está activo → cobrás <span className="text-amber-400">el doble</span>. Cancelar devuelve el 50%.
+            </p>
+          </div>
+          <BountyBoard player={player} players={players} liquidCash={Number(pData.liquid_cash)} onChange={refresh} />
+        </div>
+      )}
     </div>
   );
 }
@@ -1268,7 +1357,7 @@ function KpiCard({ label, value, icon, accent }) {
         <span className="text-[8px] uppercase font-mono tracking-widest text-zinc-500">{label}</span>
         <span className={c.text}>{icon}</span>
       </div>
-      <div className={`text-base font-black font-mono ${c.text} truncate`}>{value}</div>
+      <div className={`text-sm font-black font-mono ${c.text} leading-tight break-all`}>{value}</div>
     </div>
   );
 }

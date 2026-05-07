@@ -144,6 +144,23 @@ async function route(request, method, path) {
     const turn = await getCurrentTurn();
     const [state] = await sql`SELECT locked FROM game_state WHERE id = 1`;
     if (state?.locked) return err('Turno bloqueado, resolviendo...');
+
+    // Level gate: advanced corps require minimum player level
+    if (order_type === 'BUY_SHARES') {
+      const [corp] = await sql`SELECT required_level FROM corporations WHERE id = ${corporation_id}`;
+      const reqLevel = Number(corp?.required_level || 0);
+      if (reqLevel > 1) {
+        const [pl] = await sql`SELECT COALESCE(total_ic_spent, 0) AS total_ic_spent FROM players WHERE id = ${player_id}`;
+        const icSpent = Number(pl?.total_ic_spent || 0);
+        const THRESHOLDS = [0, 500, 1500, 3000, 6000, 12000, 25000, 50000, 100000, 200000];
+        let level = 1;
+        for (let i = 1; i < THRESHOLDS.length; i++) {
+          if (icSpent >= THRESHOLDS[i]) level = i + 1; else break;
+        }
+        if (level < reqLevel) return err(`Corp bloqueada · Requiere Nivel ${reqLevel} — tu nivel es ${level}. Invertí más IC en el Lab.`, 403);
+      }
+    }
+
     const [order] = await sql`
       INSERT INTO orders (player_id, turn_number, order_type, corporation_id, shares, limit_price)
       VALUES (${player_id}, ${turn}, ${order_type}, ${corporation_id}, ${qty}, ${limit_price || null})
