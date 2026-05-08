@@ -1217,6 +1217,22 @@ function MercadoSection({ tab, setTab, market, player, portfolio, turn, refresh,
   );
 }
 
+// ── Trading Math Helpers (per share economics) ───────────────────────────────
+function tradingMath(corp, turn) {
+  const incMult     = 1 + 0.01 * Math.pow(Math.max(1, turn), 1.15);
+  const costMult    = Math.pow(1.02, Math.max(0, turn - 1));
+  const fmv         = Number(corp.fair_market_value);
+  const totalShares = corp.total_shares || 100;
+  const sharePrice  = fmv / 100;
+  const supply      = totalShares - (corp.owned_shares || 0);
+  const supplyPct   = supply / totalShares;
+  const divPerSh    = (Number(corp.base_income || 0) * incMult) / totalShares;
+  const maintPerSh  = (fmv * 0.015 * costMult) / totalShares;
+  const netPerSh    = divPerSh - maintPerSh;
+  const roi         = sharePrice > 0 ? (netPerSh / sharePrice) * 100 : 0;
+  return { fmv, totalShares, sharePrice, supply, supplyPct, divPerSh, maintPerSh, netPerSh, roi, incMult, costMult };
+}
+
 // ── Smart Market Tab ──────────────────────────────────────────────────────────
 function SmartMarketTab({ market, player, portfolio, turn, refresh, playerLevel = 1 }) {
   const [filter,        setFilter]        = useState('all');
@@ -1225,6 +1241,13 @@ function SmartMarketTab({ market, player, portfolio, turn, refresh, playerLevel 
 
   const myCorpIds  = new Set(portfolio.map(p => p.corp_id));
   const isLockFn   = (c) => Number(c.required_level || 0) > 1 && playerLevel < Number(c.required_level || 0);
+
+  // ── Quant: compute market median ROI (baseline for valuation tags) ──
+  const allRois = market
+    .map(c => tradingMath(c, turn).roi)
+    .filter(r => Number.isFinite(r) && r !== 0)
+    .sort((a, b) => a - b);
+  const mktMedianRoi = allRois.length > 0 ? allRois[Math.floor(allRois.length / 2)] : 0;
 
   const scored = market
     .map(c => ({ ...c, score: corpScore(c, turn) }))
@@ -1252,6 +1275,8 @@ function SmartMarketTab({ market, player, portfolio, turn, refresh, playerLevel 
       onToggle={() => setExpanded(e => e === corp.id ? null : corp.id)}
       refresh={refresh}
       playerLevel={playerLevel}
+      turn={turn}
+      mktMedianRoi={mktMedianRoi}
     />
   );
 
@@ -1283,8 +1308,8 @@ function SmartMarketTab({ market, player, portfolio, turn, refresh, playerLevel 
               <BarChart2 className="h-4 w-4 text-cyan-400" />
             </div>
             <div className="text-left">
-              <div className="text-xs font-black text-white leading-tight">Terminal de Análisis</div>
-              <div className="text-[8px] font-mono text-cyan-600/80 mt-0.5">Scatter · ROI Ranking · Zonas · Tabla Maestra</div>
+              <div className="text-xs font-black text-white leading-tight">Quant Terminal</div>
+              <div className="text-[8px] font-mono text-cyan-600/80 mt-0.5">Oportunidades · Trampas de Valor · Distribución ROI</div>
             </div>
           </div>
           <div className="flex items-center gap-1 text-cyan-500 shrink-0">
@@ -1341,26 +1366,36 @@ function SmartMarketTab({ market, player, portfolio, turn, refresh, playerLevel 
   );
 }
 
-// ── Smart Corp Card — Glassmorphism, zero layout-shift ────────────────────────
-function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh, playerLevel = 1 }) {
+// ── Smart Corp Card — Trading Terminal aesthetic, zero layout-shift ──────────
+function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh, playerLevel = 1, turn = 1, mktMedianRoi = 0 }) {
   const [loading,   setLoading]   = useState(null);
   const [customQty, setCustomQty] = useState('');
   const [orderType, setOrderType] = useState('BUY_SHARES');
 
-  const sharePrice    = Number(corp.fair_market_value) / 100;
-  const buyPrice      = sharePrice * 1.03;
-  const sellPrice     = sharePrice * 0.97;
-  const supply        = (corp.total_shares || 100) - (corp.owned_shares || 0);
   const isCeo         = corp.ceo_player_id === player.id;
   const reqLevel      = Number(corp.required_level || 0);
   const isLevelLocked = reqLevel > 1 && playerLevel < reqLevel;
   const ss            = isLevelLocked ? scoreStyle(0) : scoreStyle(corp.score || 0);
   const spark         = generateSparkline(corp);
-  const yieldPct      = Number(corp.base_income) > 0 && Number(corp.fair_market_value) > 0
-    ? ((Number(corp.base_income) / Number(corp.fair_market_value)) * 100).toFixed(1)
+
+  // ── Trading economics ──
+  const m = tradingMath(corp, turn);
+  const { fmv, totalShares, sharePrice, supply, supplyPct, divPerSh, maintPerSh, netPerSh, roi } = m;
+  const buyPrice      = sharePrice * 1.03;
+  const sellPrice     = sharePrice * 0.97;
+
+  // Valuation flag (trader's tag): cheap vs expensive vs neutral
+  const valuation =
+    isLevelLocked || mktMedianRoi === 0       ? null
+    : roi > 0 && roi >= mktMedianRoi * 1.3 && supply > 0
+        ? { kind: 'cheap',  label: 'BARATA', delta: ((roi / mktMedianRoi - 1) * 100) }
+    : roi < 0
+        ? { kind: 'bleed',  label: 'SANGRA', delta: roi }
+    : roi >= 0 && roi < mktMedianRoi * 0.5
+        ? { kind: 'pricey', label: 'CARA',   delta: ((roi / mktMedianRoi - 1) * 100) }
     : null;
 
-  // Score → accent color for the left stripe & dots
+  // Score → accent color for stripe & dots
   const accentStripe =
     isLevelLocked      ? 'bg-zinc-700/50'
     : corp.score >= 5  ? 'bg-lime-400'
@@ -1368,6 +1403,13 @@ function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh, 
     : corp.score >= 3  ? 'bg-amber-400'
     : corp.score >= 2  ? 'bg-orange-400'
     :                    'bg-zinc-600';
+
+  // Net-cashflow sign drives the supply bar color
+  const supplyBarColor =
+    supply === 0  ? 'bg-red-500'
+    : supply < 10 ? 'bg-amber-400'
+    : supply < 30 ? 'bg-zinc-400'
+    :               'bg-zinc-500';
 
   const placeOrder = async (type, qty) => {
     const q = parseInt(qty, 10);
@@ -1393,20 +1435,18 @@ function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh, 
       isLevelLocked
         ? 'bg-zinc-950/70 border border-zinc-800/40 opacity-55'
         : myShares > 0
-          ? `bg-gradient-to-br from-zinc-900/80 to-black border ${ss.border} ${ss.glow}`
-          : 'bg-zinc-950/80 border border-zinc-800/50 hover:border-zinc-700/70'
+          ? `bg-gradient-to-br from-zinc-900/85 via-zinc-950 to-black border ${ss.border} ${ss.glow}`
+          : 'bg-gradient-to-br from-zinc-950 to-black border border-zinc-800/55 hover:border-zinc-700/80'
     }`}>
       <div className="flex">
-        {/* ── Left accent stripe (score color, 3px, full height) ── */}
+        {/* Left accent stripe */}
         <div className={`w-[3px] shrink-0 self-stretch ${accentStripe}`} />
 
-        {/* ── Card body ── */}
         <div className="flex-1 min-w-0">
 
-          {/* ── Header (clickable to expand) ── */}
-          <button onClick={onToggle} className="w-full text-left px-3 pt-3 pb-2.5 hover:bg-white/[0.02] transition-colors">
+          {/* ── Header ── */}
+          <button onClick={onToggle} className="w-full text-left px-3 pt-3 pb-2 hover:bg-white/[0.02] transition-colors">
             <div className="flex items-start gap-2">
-              {/* Left side: name + meta */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5 flex-wrap mb-1">
                   <span className={`font-black text-[14px] leading-snug tracking-tight ${isLevelLocked ? 'text-zinc-500' : 'text-white'}`}>
@@ -1426,28 +1466,24 @@ function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh, 
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-[8px] font-mono text-zinc-600 uppercase tracking-wide">{corp.district}</span>
-                  {/* Score dots */}
                   <div className="flex gap-[3px] items-center">
                     {Array.from({ length: 5 }).map((_, i) => (
                       <div key={i} className={`w-1.5 h-1.5 rounded-full transition-all ${i < (corp.score || 0) ? accentStripe : 'bg-zinc-800'}`} />
                     ))}
                   </div>
-                  {yieldPct && !isLevelLocked && (
-                    <span className="text-[7px] font-mono font-bold text-lime-500">{yieldPct}% yield</span>
-                  )}
                   {corp.ceo_name && (
-                    <span className="text-[7px] font-mono text-zinc-700">CEO: {corp.ceo_name}</span>
+                    <span className="text-[7px] font-mono text-zinc-700 truncate">CEO: {corp.ceo_name}</span>
                   )}
                 </div>
               </div>
 
-              {/* Right side: FMV + sparkline + supply */}
+              {/* Right: FMV + sparkline */}
               <div className="shrink-0 flex flex-col items-end gap-0.5">
                 <span className={`text-[15px] font-black font-mono leading-none tabular-nums ${isLevelLocked ? 'text-zinc-600' : ss.accent}`}>
-                  {fmt(corp.fair_market_value)}
+                  {fmt(fmv)}
                 </span>
                 {!isLevelLocked && (
-                  <svg width="68" height="22" className="overflow-visible mt-0.5">
+                  <svg width="68" height="20" className="overflow-visible mt-0.5">
                     <motion.path
                       d={spark.d}
                       fill="none"
@@ -1471,17 +1507,73 @@ function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh, 
                     })()}
                   </svg>
                 )}
-                <span className={`text-[7px] font-mono mt-0.5 ${supply === 0 ? 'text-red-400' : supply < 10 ? 'text-amber-400' : 'text-zinc-700'}`}>
-                  {supply === 0 ? '🔴 AGOTADO' : `${supply} disp.`}
-                </span>
               </div>
             </div>
           </button>
 
-          {/* ── Quick-buy row (ALWAYS VISIBLE, never changes height = no shift) ── */}
+          {/* ── Trading metrics terminal (always visible unless locked) ── */}
           {!isLevelLocked && (
-            <div className="px-3 pb-3">
-              <div className="flex gap-1.5">
+            <div className="px-3">
+              {/* 3-cell terminal grid: PRECIO · DIV NETO · ROI */}
+              <div className="grid grid-cols-3 gap-1.5 mb-2">
+                <div className="bg-black/45 border border-zinc-900 rounded-lg px-2 py-1.5">
+                  <div className="text-[10px] font-black font-mono text-white tabular-nums leading-none">{fmtDec(sharePrice)}</div>
+                  <div className="text-[7px] font-mono text-zinc-600 leading-none mt-1">por acción</div>
+                </div>
+                <div className="bg-black/45 border border-zinc-900 rounded-lg px-2 py-1.5">
+                  <div className={`text-[10px] font-black font-mono tabular-nums leading-none ${netPerSh >= 0 ? 'text-lime-400' : 'text-red-400'}`}>
+                    {netPerSh >= 0 ? '+' : ''}{fmtDec(netPerSh)}
+                  </div>
+                  <div className="text-[7px] font-mono text-zinc-600 leading-none mt-1">div neto / t</div>
+                </div>
+                <div className={`rounded-lg px-2 py-1.5 border ${
+                  valuation?.kind === 'cheap'           ? 'bg-lime-500/12 border-lime-500/35'
+                  : valuation?.kind === 'bleed'         ? 'bg-red-500/12 border-red-500/35'
+                  : valuation?.kind === 'pricey'        ? 'bg-amber-500/10 border-amber-500/30'
+                  :                                       'bg-black/45 border-zinc-900'
+                }`}>
+                  <div className={`text-[10px] font-black font-mono tabular-nums leading-none ${roi >= 0 ? 'text-lime-400' : 'text-red-400'}`}>
+                    {roi >= 0 ? '+' : ''}{roi.toFixed(2)}%
+                  </div>
+                  <div className="text-[7px] font-mono text-zinc-600 leading-none mt-1">ROI / turno</div>
+                </div>
+              </div>
+
+              {/* Supply bar with explicit context */}
+              <div className="mb-2">
+                <div className="flex items-baseline justify-between mb-1">
+                  <span className="text-[7px] font-mono uppercase text-zinc-600 tracking-wider">Oferta</span>
+                  <span className={`text-[8px] font-mono font-bold ${supply === 0 ? 'text-red-400' : supply < 10 ? 'text-amber-400' : 'text-zinc-400'}`}>
+                    {supply === 0 ? '🔴 AGOTADO' : `Quedan ${supply} de ${totalShares}`}
+                  </span>
+                </div>
+                <div className="h-1 bg-zinc-900 rounded-full overflow-hidden">
+                  <motion.div
+                    className={`h-full rounded-full ${supplyBarColor}`}
+                    initial={{ width: 0 }}
+                    animate={{ width: `${supplyPct * 100}%` }}
+                    transition={{ duration: 0.6, ease: 'easeOut' }}
+                  />
+                </div>
+              </div>
+
+              {/* Valuation chip */}
+              {valuation && (
+                <div className={`mb-2 inline-flex items-center gap-1.5 text-[8px] font-mono font-bold px-2 py-1 rounded-full border ${
+                  valuation.kind === 'cheap'
+                    ? 'bg-lime-500/15 border-lime-500/40 text-lime-300'
+                    : 'bg-red-500/15 border-red-500/40 text-red-300'
+                }`}>
+                  <span>{valuation.kind === 'cheap' ? '🟢' : valuation.kind === 'bleed' ? '🩸' : '🔴'}</span>
+                  <span className="tracking-wider">{valuation.label}</span>
+                  {Math.abs(valuation.delta) >= 1 && (
+                    <span className="opacity-70 font-normal">{valuation.delta > 0 ? '+' : ''}{valuation.delta.toFixed(0)}% vs mkt</span>
+                  )}
+                </div>
+              )}
+
+              {/* Quick-buy row + expand */}
+              <div className="flex gap-1.5 pb-3">
                 {[5, 10, 25].map(qty => (
                   <button
                     key={qty}
@@ -1499,7 +1591,6 @@ function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh, 
                     )}
                   </button>
                 ))}
-                {/* Expand toggle — fixed size, never shifts */}
                 <button
                   onClick={onToggle}
                   className={`px-3 py-2 rounded-xl border transition-all active:scale-95 flex items-center justify-center ${
@@ -1514,7 +1605,7 @@ function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh, 
             </div>
           )}
 
-          {/* ── Expanded detail panel ── */}
+          {/* ── Expanded panel ── */}
           <AnimatePresence initial={false}>
             {isExpanded && (
               <motion.div
@@ -1537,18 +1628,25 @@ function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh, 
                   </div>
                 ) : (
                   <div className="border-t border-zinc-800/50 mx-3 mb-3 pt-3 space-y-3">
-                    {/* Stats grid */}
-                    <div className="grid grid-cols-3 gap-1.5 text-center">
-                      {[
-                        { label: 'por acción', value: fmtDec(sharePrice), color: ss.accent },
-                        { label: 'yield',      value: yieldPct ? yieldPct + '%' : '—', color: yieldPct ? 'text-lime-400' : 'text-zinc-600' },
-                        { label: 'spread',     value: '±3%', color: 'text-zinc-500' },
-                      ].map(({ label, value, color }) => (
-                        <div key={label} className="bg-zinc-900/50 rounded-xl py-2">
-                          <div className={`text-[10px] font-black font-mono ${color}`}>{value}</div>
-                          <div className="text-[7px] font-mono text-zinc-600 mt-0.5">{label}</div>
+                    {/* Cashflow breakdown */}
+                    <div>
+                      <div className="text-[7px] font-mono uppercase text-zinc-600 mb-1.5 tracking-widest">Desglose por acción / turno</div>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        <div className="bg-lime-500/8 border border-lime-500/20 rounded-lg px-2 py-1.5 text-center">
+                          <div className="text-[10px] font-black font-mono text-lime-400 tabular-nums">+{fmtDec(divPerSh)}</div>
+                          <div className="text-[7px] font-mono text-zinc-600 mt-0.5">dividendo</div>
                         </div>
-                      ))}
+                        <div className="bg-red-500/8 border border-red-500/20 rounded-lg px-2 py-1.5 text-center">
+                          <div className="text-[10px] font-black font-mono text-red-400 tabular-nums">−{fmtDec(maintPerSh)}</div>
+                          <div className="text-[7px] font-mono text-zinc-600 mt-0.5">mantenim.</div>
+                        </div>
+                        <div className={`rounded-lg px-2 py-1.5 text-center border ${netPerSh >= 0 ? 'bg-lime-500/12 border-lime-500/35' : 'bg-red-500/12 border-red-500/35'}`}>
+                          <div className={`text-[10px] font-black font-mono tabular-nums ${netPerSh >= 0 ? 'text-lime-400' : 'text-red-400'}`}>
+                            = {netPerSh >= 0 ? '+' : ''}{fmtDec(netPerSh)}
+                          </div>
+                          <div className="text-[7px] font-mono text-zinc-600 mt-0.5">neto</div>
+                        </div>
+                      </div>
                     </div>
 
                     {/* SELL quick buttons */}
@@ -1590,9 +1688,8 @@ function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh, 
                       </Button>
                     </div>
 
-                    {/* Meta */}
                     <div className="flex justify-between text-[7px] font-mono text-zinc-700">
-                      <span>banda {fmt(Math.round(Number(corp.fair_market_value) * 0.5))}–{fmt(Math.round(Number(corp.fair_market_value) * 2.5))}</span>
+                      <span>banda {fmt(Math.round(fmv * 0.5))}–{fmt(Math.round(fmv * 2.5))}</span>
                       <span>FMV · spread ±3%</span>
                     </div>
                   </div>
@@ -1607,44 +1704,62 @@ function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh, 
   );
 }
 
-// ── Market Analytics Dashboard (Terminal de Análisis) ─────────────────────────
+// ── Quant Terminal — Actionable Analytics Dashboard ──────────────────────────
 function MarketAnalyticsDashboard({ market, turn, onClose }) {
+  // Compute per-share economics for every corp
   const scored = market.map(c => {
-    const score   = corpScore(c, turn);
-    const fmv     = Number(c.fair_market_value);
-    const yld     = fmv > 0 && Number(c.base_income) > 0 ? (Number(c.base_income) / fmv) * 100 : 0;
-    const supply  = (c.total_shares || 100) - (c.owned_shares || 0);
-    const supplyPct = supply / (c.total_shares || 100);
-    return { ...c, score, fmv, yield: yld, supply, supplyPct };
+    const score = corpScore(c, turn);
+    const m     = tradingMath(c, turn);
+    return { ...c, ...m, score };
   });
 
-  // ── Scatter geometry ──
-  const maxFmv   = Math.max(...scored.map(c => c.fmv), 1);
-  const maxYield = Math.max(...scored.map(c => c.yield), 0.1);
-  const PW = 260; const PH = 148;
-  const PAD = { l: 38, r: 10, t: 12, b: 28 };
-  const toX = (v) => PAD.l + (v / maxFmv) * PW;
-  const toY = (v) => PAD.t + PH - (v / maxYield) * PH;
+  // Market median ROI = baseline for "cheap vs expensive"
+  const validRois = scored.map(c => c.roi).filter(r => Number.isFinite(r) && r !== 0).sort((a, b) => a - b);
+  const medianRoi = validRois.length > 0 ? validRois[Math.floor(validRois.length / 2)] : 0;
 
-  // ── ROI ranking ──
-  const byYield   = [...scored].sort((a, b) => b.yield - a.yield).slice(0, 8);
-  const maxRY     = byYield[0]?.yield || 0.1;
+  // ── Oportunidades (Undervalued): top 3 ROI with supply available ──
+  const oportunidades = [...scored]
+    .filter(c => c.supply > 0 && c.roi > 0 && c.roi >= medianRoi * 1.2)
+    .sort((a, b) => b.roi - a.roi)
+    .slice(0, 3);
 
-  // ── Districts ──
+  // ── Trampas de Valor (Overvalued): worst 3 by ROI ──
+  const trampas = [...scored]
+    .filter(c => Number.isFinite(c.roi) && c.roi !== 0)
+    .sort((a, b) => a.roi - b.roi)
+    .slice(0, 3);
+
+  // ── Capital por Distrito (FMV stack) ──
   const districtMap = {};
   for (const c of scored) {
     if (!c.district) continue;
-    if (!districtMap[c.district]) districtMap[c.district] = { corps: 0, fmv: 0, scoreSum: 0 };
-    districtMap[c.district].corps++;
-    districtMap[c.district].fmv     += c.fmv;
+    if (!districtMap[c.district]) districtMap[c.district] = { fmv: 0, count: 0, scoreSum: 0, roiSum: 0 };
+    districtMap[c.district].fmv      += c.fmv;
+    districtMap[c.district].count    += 1;
     districtMap[c.district].scoreSum += c.score;
+    districtMap[c.district].roiSum   += c.roi;
   }
   const districts = Object.entries(districtMap)
-    .map(([name, d]) => ({ name, ...d, avgScore: d.scoreSum / d.corps }))
-    .sort((a, b) => b.avgScore - a.avgScore);
+    .map(([name, d]) => ({ name, ...d, avgScore: d.scoreSum / d.count, avgRoi: d.roiSum / d.count }))
+    .sort((a, b) => b.fmv - a.fmv);
+  const totalFmv = districts.reduce((s, d) => s + d.fmv, 0);
 
-  const dotColor = (score) =>
-    score >= 5 ? '#84cc16' : score >= 4 ? '#22d3ee' : score >= 3 ? '#f59e0b' : score >= 2 ? '#f97316' : '#71717a';
+  // ── ROI Distribution histogram ──
+  const buckets = [
+    { label: '<0%',   color: 'bg-red-500',    text: 'text-red-400',    test: r => r < 0 },
+    { label: '0-2%',  color: 'bg-zinc-500',   text: 'text-zinc-400',   test: r => r >= 0 && r < 2 },
+    { label: '2-4%',  color: 'bg-amber-500',  text: 'text-amber-400',  test: r => r >= 2 && r < 4 },
+    { label: '4-6%',  color: 'bg-cyan-500',   text: 'text-cyan-400',   test: r => r >= 4 && r < 6 },
+    { label: '6%+',   color: 'bg-lime-500',   text: 'text-lime-400',   test: r => r >= 6 },
+  ];
+  const distrib = buckets.map(b => ({ ...b, count: scored.filter(c => b.test(c.roi)).length }));
+  const maxBucket = Math.max(...distrib.map(b => b.count), 1);
+
+  // District legend palette (institutional-feel)
+  const districtPalette = [
+    'bg-cyan-500',  'bg-lime-500',    'bg-orange-500', 'bg-pink-500',
+    'bg-purple-500','bg-amber-500',   'bg-emerald-500','bg-fuchsia-500',
+  ];
 
   return (
     <motion.div
@@ -1662,8 +1777,10 @@ function MarketAnalyticsDashboard({ market, turn, onClose }) {
             <BarChart2 className="h-4 w-4 text-cyan-400" />
           </div>
           <div>
-            <div className="text-[11px] font-black text-white tracking-tight">Terminal de Análisis</div>
-            <div className="text-[8px] font-mono text-zinc-600 uppercase tracking-wider">T#{turn} · {scored.length} activos · en vivo</div>
+            <div className="text-[11px] font-black text-white tracking-tight">Quant Terminal</div>
+            <div className="text-[8px] font-mono text-zinc-600 uppercase tracking-wider">
+              T#{turn} · ROI mediano <span className="text-cyan-400">{medianRoi.toFixed(2)}%</span> · {scored.length} activos
+            </div>
           </div>
         </div>
         <button onClick={onClose}
@@ -1672,183 +1789,200 @@ function MarketAnalyticsDashboard({ market, turn, onClose }) {
         </button>
       </div>
 
-      {/* Scrollable body */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4"
-        style={{ scrollbarWidth: 'thin', scrollbarColor: '#3f3f46 transparent' }}>
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4" style={{ scrollbarWidth: 'thin', scrollbarColor: '#3f3f46 transparent' }}>
 
-        {/* ── 1. Scatter Plot: FMV vs Yield ── */}
-        <div className="bg-zinc-950/60 border border-zinc-800/50 rounded-2xl p-4">
-          <div className="flex items-start justify-between mb-3">
-            <div>
-              <div className="text-xs font-black text-white">Precio vs Rendimiento</div>
-              <div className="text-[8px] font-mono text-zinc-600 mt-0.5">
-                Arriba-izquierda = joya oculta · tamaño = oferta disponible
+        {/* ── 🟢 OPORTUNIDADES (Undervalued) ── */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
+          className="rounded-2xl overflow-hidden border border-lime-500/25 bg-gradient-to-br from-lime-950/35 via-zinc-950 to-black"
+        >
+          <div className="px-4 pt-3 pb-2 flex items-baseline justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-base">🟢</span>
+              <div>
+                <div className="text-xs font-black text-lime-300 tracking-tight">Oportunidades</div>
+                <div className="text-[7px] font-mono text-lime-700/80 uppercase tracking-widest">undervalued · ROI ≥ mediana × 1.2</div>
               </div>
             </div>
-            <div className="flex gap-2 shrink-0">
-              {[[5,'#84cc16'],[4,'#22d3ee'],[3,'#f59e0b']].map(([s, c]) => (
-                <span key={s} className="flex items-center gap-1 text-[7px] font-mono text-zinc-600">
-                  <span className="w-2 h-2 rounded-full inline-block" style={{ background: String(c) }} />
-                  {s}★
-                </span>
-              ))}
-            </div>
+            <span className="text-[7px] font-mono text-lime-700/80 uppercase tracking-wider">comprar</span>
           </div>
-          <svg
-            viewBox={`0 0 ${PW + PAD.l + PAD.r} ${PH + PAD.t + PAD.b}`}
-            className="w-full" style={{ maxHeight: 210 }}
-          >
-            {/* Sweet-spot zone */}
-            <rect x={PAD.l} y={PAD.t} width={PW * 0.38} height={PH * 0.42} fill="rgba(132,204,22,0.04)" rx="4" />
-            <text x={PAD.l + PW * 0.19} y={PAD.t + 11} textAnchor="middle" fill="rgba(132,204,22,0.22)" fontSize="6" fontFamily="monospace" fontWeight="bold">SWEET SPOT</text>
-
-            {/* Grid */}
-            {[0.25, 0.5, 0.75].map(t => (
-              <g key={t}>
-                <line x1={PAD.l} y1={PAD.t + PH - t * PH} x2={PAD.l + PW} y2={PAD.t + PH - t * PH} stroke="#27272a" strokeWidth="0.8" strokeDasharray="4 3" />
-                <line x1={PAD.l + t * PW} y1={PAD.t} x2={PAD.l + t * PW} y2={PAD.t + PH} stroke="#27272a" strokeWidth="0.8" strokeDasharray="4 3" />
-              </g>
-            ))}
-
-            {/* Axes */}
-            <line x1={PAD.l} y1={PAD.t} x2={PAD.l} y2={PAD.t + PH} stroke="#3f3f46" strokeWidth="1" />
-            <line x1={PAD.l} y1={PAD.t + PH} x2={PAD.l + PW} y2={PAD.t + PH} stroke="#3f3f46" strokeWidth="1" />
-
-            {/* Labels */}
-            <text x={PAD.l + PW / 2} y={PAD.t + PH + 20} textAnchor="middle" fill="#52525b" fontSize="7" fontFamily="monospace">Precio (FMV) →</text>
-            <text x={9} y={PAD.t + PH / 2} textAnchor="middle" fill="#52525b" fontSize="7" fontFamily="monospace"
-              transform={`rotate(-90 9 ${PAD.t + PH / 2})`}>Yield % →</text>
-
-            {/* Y ticks */}
-            {[0.5, 1].map(t => (
-              <text key={t} x={PAD.l - 4} y={PAD.t + PH - t * PH + 3} textAnchor="end" fill="#52525b" fontSize="6.5" fontFamily="monospace">
-                {(maxYield * t).toFixed(1)}%
-              </text>
-            ))}
-
-            {/* Dots */}
-            {scored.map((c) => {
-              const cx = toX(c.fmv);
-              const cy = c.yield > 0 ? toY(c.yield) : PAD.t + PH - 1;
-              const r  = 3.5 + c.supplyPct * 4.5;
-              const col = dotColor(c.score);
-              return (
-                <g key={c.id}>
-                  <circle cx={cx} cy={cy} r={r + 4} fill={col} opacity="0.10" />
-                  <circle cx={cx} cy={cy} r={r} fill={col} opacity="0.88" stroke="rgba(0,0,0,0.4)" strokeWidth="0.5" />
-                  {c.score >= 4 && (
-                    <text x={cx} y={cy - r - 3} textAnchor="middle" fill={col} fontSize="5.5" fontFamily="monospace" fontWeight="bold" opacity="0.9">
-                      {c.name.length > 10 ? c.name.slice(0, 9) + '…' : c.name}
-                    </text>
-                  )}
-                </g>
-              );
-            })}
-          </svg>
-        </div>
-
-        {/* ── 2. ROI Ranking ── */}
-        <div className="bg-zinc-950/60 border border-zinc-800/50 rounded-2xl p-4">
-          <div className="mb-3">
-            <div className="text-xs font-black text-white">Ranking de Rendimiento</div>
-            <div className="text-[8px] font-mono text-zinc-600 mt-0.5">Yield % = Dividendo base / FMV · top 8</div>
-          </div>
-          <div className="space-y-2.5">
-            {byYield.map((c, i) => {
-              const ss = scoreStyle(c.score);
-              return (
-                <div key={c.id} className="flex items-center gap-2">
-                  <span className="text-[7px] font-mono text-zinc-700 w-3 shrink-0 text-right">{i + 1}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-1 gap-2">
-                      <span className={`text-[9px] font-bold truncate leading-none ${ss.accent}`}>{c.name}</span>
-                      <span className="text-[8px] font-mono text-zinc-400 shrink-0 leading-none">
-                        {c.yield > 0 ? c.yield.toFixed(2) + '%' : '—'}
-                      </span>
+          {oportunidades.length === 0 ? (
+            <p className="px-4 pb-3 text-[9px] text-zinc-600 italic text-center">Sin oportunidades claras este turno. El mercado está parejo.</p>
+          ) : (
+            <div className="px-2 pb-2">
+              {oportunidades.map((c, i) => {
+                const ss = scoreStyle(c.score);
+                return (
+                  <motion.div key={c.id}
+                    initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.1 + i * 0.06 }}
+                    className="flex items-center gap-2 px-2 py-2 rounded-xl hover:bg-white/[0.03] transition-colors">
+                    <div className="w-6 h-6 rounded-lg bg-lime-500/15 border border-lime-500/30 flex items-center justify-center shrink-0">
+                      <span className="text-[9px] font-black text-lime-400">#{i + 1}</span>
                     </div>
-                    <div className="h-1.5 bg-zinc-900 rounded-full overflow-hidden">
-                      <motion.div
-                        className={`h-full ${ss.bar} rounded-full`}
-                        initial={{ width: 0 }}
-                        animate={{ width: `${(c.yield / maxRY) * 100}%` }}
-                        transition={{ duration: 0.55, delay: i * 0.05, ease: 'easeOut' }}
-                      />
+                    <div className="flex-1 min-w-0">
+                      <div className={`text-[10px] font-black truncate leading-none ${ss.accent}`}>{c.name}</div>
+                      <div className="text-[8px] font-mono text-zinc-500 leading-none mt-0.5 truncate">
+                        {c.district} · {c.supply} disp · {fmtDec(c.sharePrice)}/sh
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="text-[12px] font-black font-mono text-lime-400 tabular-nums leading-none">+{c.roi.toFixed(2)}%</div>
+                      {medianRoi > 0 && (
+                        <div className="text-[7px] font-mono text-lime-700/80 mt-0.5">{((c.roi / medianRoi - 1) * 100).toFixed(0)}% vs mkt</div>
+                      )}
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          )}
+        </motion.div>
+
+        {/* ── 🔴 TRAMPAS DE VALOR (Overvalued) ── */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
+          className="rounded-2xl overflow-hidden border border-red-500/25 bg-gradient-to-br from-red-950/35 via-zinc-950 to-black"
+        >
+          <div className="px-4 pt-3 pb-2 flex items-baseline justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-base">🔴</span>
+              <div>
+                <div className="text-xs font-black text-red-300 tracking-tight">Trampas de Valor</div>
+                <div className="text-[7px] font-mono text-red-700/80 uppercase tracking-widest">overvalued · ROI bajo / negativo</div>
+              </div>
+            </div>
+            <span className="text-[7px] font-mono text-red-700/80 uppercase tracking-wider">vender / evitar</span>
+          </div>
+          <div className="px-2 pb-2">
+            {trampas.map((c, i) => {
+              const ss = scoreStyle(c.score);
+              const bleed = c.netPerSh * c.totalShares; // total bleed across all shares of corp
+              return (
+                <motion.div key={c.id}
+                  initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.15 + i * 0.06 }}
+                  className="flex items-center gap-2 px-2 py-2 rounded-xl hover:bg-white/[0.03] transition-colors">
+                  <div className="w-6 h-6 rounded-lg bg-red-500/15 border border-red-500/30 flex items-center justify-center shrink-0">
+                    <span className="text-[10px] font-black text-red-400">⚠</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className={`text-[10px] font-black truncate leading-none ${ss.accent}`}>{c.name}</div>
+                    <div className="text-[8px] font-mono text-zinc-500 leading-none mt-0.5 truncate">
+                      {c.district} · {fmtDec(c.sharePrice)}/sh · maint {fmtDec(c.maintPerSh)}
                     </div>
                   </div>
-                  <span className="text-[7px] font-mono text-zinc-600 shrink-0 w-12 text-right">{fmt(c.fmv)}</span>
-                </div>
+                  <div className="text-right shrink-0">
+                    <div className={`text-[12px] font-black font-mono tabular-nums leading-none ${c.roi < 0 ? 'text-red-400' : 'text-amber-400'}`}>
+                      {c.roi >= 0 ? '+' : ''}{c.roi.toFixed(2)}%
+                    </div>
+                    <div className="text-[7px] font-mono text-red-700/80 mt-0.5">
+                      {bleed < 0 ? `sangra ${fmt(Math.abs(Math.round(bleed)))}/t` : 'rinde poco'}
+                    </div>
+                  </div>
+                </motion.div>
               );
             })}
           </div>
-        </div>
+        </motion.div>
 
-        {/* ── 3. District Map ── */}
+        {/* ── 📊 CAPITAL POR DISTRITO (stacked bar) ── */}
         {districts.length > 0 && (
           <div className="bg-zinc-950/60 border border-zinc-800/50 rounded-2xl p-4">
             <div className="mb-3">
-              <div className="text-xs font-black text-white">Mapa de Zonas</div>
-              <div className="text-[8px] font-mono text-zinc-600 mt-0.5">Score promedio y capital por distrito</div>
+              <div className="text-xs font-black text-white">Capital por Distrito</div>
+              <div className="text-[8px] font-mono text-zinc-600 mt-0.5">FMV total · {fmt(Math.round(totalFmv))} en circulación</div>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              {districts.map(d => {
-                const ss = scoreStyle(Math.round(d.avgScore));
-                return (
-                  <div key={d.name} className={`rounded-xl border p-3 ${ss.border} ${ss.bg}`}>
-                    <div className={`text-[8px] font-mono uppercase font-bold tracking-wider mb-2 truncate ${ss.accent}`}>{d.name}</div>
-                    <div className="flex items-end justify-between mb-2">
-                      <div>
-                        <div className="text-sm font-black text-white leading-none">{d.corps}</div>
-                        <div className="text-[7px] font-mono text-zinc-600 mt-0.5">corps</div>
-                      </div>
-                      <div className="text-right">
-                        <div className={`text-[17px] font-black font-mono leading-none ${ss.accent}`}>{d.avgScore.toFixed(1)}</div>
-                        <div className="text-[7px] font-mono text-zinc-600 mt-0.5">avg score</div>
-                      </div>
-                    </div>
-                    <div className="h-1 bg-black/40 rounded-full overflow-hidden">
-                      <motion.div
-                        className={`h-full ${ss.bar} rounded-full`}
-                        initial={{ width: 0 }}
-                        animate={{ width: `${(d.avgScore / 5) * 100}%` }}
-                        transition={{ duration: 0.5, ease: 'easeOut' }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
+            {/* Stacked horizontal bar */}
+            <div className="h-3 bg-zinc-900 rounded-full overflow-hidden flex mb-3">
+              {districts.map((d, i) => (
+                <motion.div
+                  key={d.name}
+                  className={`h-full ${districtPalette[i % districtPalette.length]}`}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${(d.fmv / totalFmv) * 100}%` }}
+                  transition={{ duration: 0.6, delay: 0.2 + i * 0.05, ease: 'easeOut' }}
+                  title={d.name}
+                />
+              ))}
+            </div>
+            {/* Legend with avg ROI per district */}
+            <div className="space-y-1.5">
+              {districts.map((d, i) => (
+                <div key={d.name} className="flex items-center gap-2">
+                  <div className={`w-2 h-2 rounded-sm shrink-0 ${districtPalette[i % districtPalette.length]}`} />
+                  <span className="text-[9px] font-mono text-zinc-300 truncate flex-1 min-w-0">{d.name}</span>
+                  <span className="text-[8px] font-mono text-zinc-600 shrink-0 w-12 text-right">{fmt(Math.round(d.fmv))}</span>
+                  <span className="text-[8px] font-mono text-zinc-500 shrink-0 w-10 text-right">{((d.fmv / totalFmv) * 100).toFixed(0)}%</span>
+                  <span className={`text-[8px] font-mono font-bold shrink-0 w-12 text-right tabular-nums ${d.avgRoi >= medianRoi ? 'text-lime-400' : 'text-red-400'}`}>
+                    {d.avgRoi >= 0 ? '+' : ''}{d.avgRoi.toFixed(2)}%
+                  </span>
+                </div>
+              ))}
             </div>
           </div>
         )}
 
-        {/* ── 4. Tabla Maestra ── */}
+        {/* ── 📈 DISTRIBUCIÓN DE ROI (histogram) ── */}
+        <div className="bg-zinc-950/60 border border-zinc-800/50 rounded-2xl p-4">
+          <div className="mb-3">
+            <div className="text-xs font-black text-white">Distribución de ROI</div>
+            <div className="text-[8px] font-mono text-zinc-600 mt-0.5">Cuántas corps caen en cada rango de rendimiento</div>
+          </div>
+          <div className="flex items-end gap-2 h-24 pb-2 border-b border-zinc-800/50">
+            {distrib.map((b, i) => (
+              <div key={b.label} className="flex-1 flex flex-col items-center justify-end gap-1">
+                <div className={`text-[9px] font-mono font-black ${b.text}`}>{b.count}</div>
+                <motion.div
+                  className={`w-full ${b.color} rounded-t-md`}
+                  initial={{ height: 0 }}
+                  animate={{ height: `${(b.count / maxBucket) * 78}px` }}
+                  transition={{ duration: 0.5, delay: 0.3 + i * 0.05, ease: 'easeOut' }}
+                  style={{ minHeight: 3 }}
+                />
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2 pt-1.5">
+            {distrib.map(b => (
+              <div key={b.label} className="flex-1 text-center text-[7px] font-mono text-zinc-600">{b.label}</div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── 📋 TABLA MAESTRA — sortable, with ROI ── */}
         <div className="bg-zinc-950/60 border border-zinc-800/50 rounded-2xl p-4 pb-6">
           <div className="mb-3">
             <div className="text-xs font-black text-white">Tabla Maestra</div>
-            <div className="text-[8px] font-mono text-zinc-600 mt-0.5">Todos los activos · ordenados por score</div>
+            <div className="text-[8px] font-mono text-zinc-600 mt-0.5">Todos los activos · ordenados por ROI desc</div>
           </div>
           <div className="overflow-x-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: '#3f3f46 transparent' }}>
-            <table className="w-full font-mono min-w-[280px]" style={{ fontSize: '9px' }}>
+            <table className="w-full font-mono min-w-[340px]" style={{ fontSize: '9px' }}>
               <thead>
                 <tr className="border-b border-zinc-800">
-                  {[['Corp','text-left'],['FMV','text-right'],['Yield','text-right'],['Oferta','text-right'],['◉','text-center']].map(([h, align]) => (
-                    <th key={h} className={`text-zinc-600 font-normal pb-1.5 ${align}`}>{h}</th>
+                  {[['Corp','text-left'],['Precio','text-right'],['Net/sh','text-right'],['ROI','text-right'],['Disp','text-right'],['◉','text-center']].map(([h, align]) => (
+                    <th key={h} className={`text-zinc-600 font-normal pb-1.5 px-1 ${align}`}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {[...scored].sort((a, b) => b.score - a.score).map(c => {
+                {[...scored].sort((a, b) => b.roi - a.roi).map(c => {
                   const ss = scoreStyle(c.score);
                   return (
                     <tr key={c.id} className="border-b border-zinc-900/30 last:border-0 hover:bg-white/[0.02] transition-colors">
                       <td className={`py-1.5 font-bold pr-2 ${ss.accent}`}>{c.name}</td>
-                      <td className="py-1.5 text-right text-zinc-300 tabular-nums">{fmt(c.fmv)}</td>
-                      <td className={`py-1.5 text-right tabular-nums ${c.yield > 0 ? 'text-lime-400' : 'text-zinc-700'}`}>
-                        {c.yield > 0 ? c.yield.toFixed(2) + '%' : '—'}
+                      <td className="py-1.5 text-right text-zinc-300 tabular-nums px-1">{fmtDec(c.sharePrice)}</td>
+                      <td className={`py-1.5 text-right tabular-nums px-1 ${c.netPerSh >= 0 ? 'text-lime-400' : 'text-red-400'}`}>
+                        {c.netPerSh >= 0 ? '+' : ''}{fmtDec(c.netPerSh)}
                       </td>
-                      <td className={`py-1.5 text-right tabular-nums ${c.supply === 0 ? 'text-red-400' : c.supply < 10 ? 'text-amber-400' : 'text-zinc-500'}`}>
+                      <td className={`py-1.5 text-right tabular-nums px-1 font-bold ${c.roi >= 0 ? 'text-lime-400' : 'text-red-400'}`}>
+                        {c.roi >= 0 ? '+' : ''}{c.roi.toFixed(2)}%
+                      </td>
+                      <td className={`py-1.5 text-right tabular-nums px-1 ${c.supply === 0 ? 'text-red-400' : c.supply < 10 ? 'text-amber-400' : 'text-zinc-500'}`}>
                         {c.supply === 0 ? 'AGO' : c.supply}
                       </td>
-                      <td className="py-1.5">
+                      <td className="py-1.5 text-center">
                         <div className="flex justify-center gap-px">
                           {Array.from({ length: 5 }).map((_, j) => (
                             <div key={j} className={`w-1.5 h-1.5 rounded-sm ${j < c.score ? ss.bar : 'bg-zinc-800'}`} />
@@ -1868,126 +2002,236 @@ function MarketAnalyticsDashboard({ market, turn, onClose }) {
   );
 }
 
-// ── Portfolio Section ─────────────────────────────────────────────────────────
+// ── Portfolio Section — Trader's Position Manager ────────────────────────────
 function PortfolioSection({ portfolio, market, player, turn, refresh }) {
   const [loading, setLoading] = useState(null);
-  const [buyingFor, setBuyingFor] = useState(null); // corpId for inline buy
 
-  const incMult  = 1 + 0.01 * Math.pow(Math.max(1, turn), 1.15);
-  const costMult = Math.pow(1.02, Math.max(0, turn - 1));
+  // Build enriched positions sorted by value desc
+  const positions = portfolio.map(s => {
+    const corp = market.find(c => c.id === s.corp_id);
+    if (!corp) return null;
+    const m           = tradingMath(corp, turn);
+    const myPct       = s.shares / m.totalShares;
+    const value       = myPct * m.fmv;
+    const div         = m.divPerSh   * s.shares;
+    const maint       = m.maintPerSh * s.shares;
+    const net         = m.netPerSh   * s.shares;
+    const score       = corpScore(corp, turn);
+    const ss          = scoreStyle(score);
+    const isCeo       = corp.ceo_player_id === player.id;
+    return { ...s, corp, ...m, myPct, value, div, maint, net, score, ss, isCeo, name: s.name || corp.name };
+  }).filter(Boolean).sort((a, b) => b.value - a.value);
 
-  const sellQuick = async (corpId, qty) => {
-    setLoading(`sell-${corpId}-${qty}`);
+  const totalValue   = positions.reduce((s, p) => s + p.value, 0);
+  const totalNet     = positions.reduce((s, p) => s + p.net, 0);
+  const totalDiv     = positions.reduce((s, p) => s + p.div, 0);
+  const totalMaint   = positions.reduce((s, p) => s + p.maint, 0);
+  const winners      = positions.filter(p => p.net > 0).length;
+  const losers       = positions.filter(p => p.net < 0).length;
+  const ceoCount     = positions.filter(p => p.isCeo).length;
+  const portfolioRoi = totalValue > 0 ? (totalNet / totalValue) * 100 : 0;
+
+  const trade = async (corpId, qty, type) => {
+    setLoading(`${type}-${corpId}-${qty}`);
     try {
-      await api('orders', {
-        method: 'POST',
-        body: JSON.stringify({ player_id: player.id, order_type: 'SELL_SHARES', corporation_id: corpId, shares: qty }),
-      });
+      await api('orders', { method: 'POST', body: JSON.stringify({ player_id: player.id, order_type: type, corporation_id: corpId, shares: qty }) });
       const name = portfolio.find(p => p.corp_id === corpId)?.name || '';
-      toast.success(`-${qty} ${name} encolado`);
+      toast.success(`${type === 'BUY_SHARES' ? '+' : '-'}${qty} ${name}`);
       refresh();
     } catch (e) { toast.error(e.message); }
     finally { setLoading(null); }
   };
 
-  const buyQuick = async (corpId, qty) => {
-    setLoading(`buy-${corpId}-${qty}`);
-    try {
-      await api('orders', {
-        method: 'POST',
-        body: JSON.stringify({ player_id: player.id, order_type: 'BUY_SHARES', corporation_id: corpId, shares: qty }),
-      });
-      const name = portfolio.find(p => p.corp_id === corpId)?.name || '';
-      toast.success(`+${qty} ${name} encolado`);
-      setBuyingFor(null);
-      refresh();
-    } catch (e) { toast.error(e.message); }
-    finally { setLoading(null); }
-  };
-
-  if (portfolio.length === 0) {
+  if (positions.length === 0) {
     return (
-      <Card className="bg-zinc-950 border-zinc-900">
-        <CardContent className="p-6 text-center">
-          <Building2 className="h-8 w-8 text-zinc-700 mx-auto mb-2" />
-          <p className="text-zinc-500 text-sm">No posees acciones. Usá el Mercado para comprar.</p>
-        </CardContent>
-      </Card>
+      <div className="bg-zinc-950/60 border border-zinc-800/50 rounded-2xl p-8 text-center">
+        <Building2 className="h-10 w-10 text-zinc-700 mx-auto mb-3" />
+        <p className="text-zinc-300 text-sm font-bold mb-1">Sin posiciones abiertas</p>
+        <p className="text-[10px] font-mono text-zinc-600">Andá al Mercado y comprá tu primera acción para empezar a generar cashflow.</p>
+      </div>
     );
   }
 
   return (
-    <div className="space-y-2">
-      {portfolio.map(s => {
-        const corp   = market.find(c => c.id === s.corp_id);
-        const pct    = (s.shares / s.total_shares) * 100;
-        const value  = (s.shares / s.total_shares) * Number(s.fair_market_value);
-        const isCeo  = s.ceo_player_id === player.id;
-        const myPct  = s.shares / (corp?.total_shares || 100);
-        const div    = Number(corp?.base_income || 0) * incMult * myPct;
-        const maint  = myPct * Number(s.fair_market_value) * 0.015 * costMult;
-        const net    = div - maint;
+    <div className="space-y-3">
 
-        return (
-          <div key={s.corp_id} className="bg-zinc-950 border border-zinc-800 rounded-xl p-3 space-y-2">
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="font-bold text-sm text-white leading-tight">{s.name}</span>
-                  {isCeo && <Badge className="bg-orange-500/20 text-orange-300 border-orange-500/30 text-[8px]"><Crown className="h-2 w-2 mr-0.5" />CEO</Badge>}
-                  <span className="text-[9px] font-mono text-zinc-500">{corp?.district}</span>
-                </div>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-xs font-mono text-zinc-400">{s.shares} sh · {pct.toFixed(1)}%</span>
-                  <span className={`text-[9px] font-mono font-bold ${net >= 0 ? 'text-lime-400' : 'text-red-400'}`}>
-                    {net >= 0 ? '+' : ''}{fmt(Math.round(net))}/t
-                  </span>
-                </div>
-              </div>
-              <div className="text-right shrink-0">
-                <div className="text-sm font-black font-mono text-lime-400">{fmt(Math.round(value))}</div>
-                <div className="text-[8px] font-mono text-zinc-500">{fmtDec(Number(s.fair_market_value) / 100)}/sh</div>
-              </div>
+      {/* ── Portfolio Hero — el resumen de un trader ── */}
+      <motion.div
+        initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
+        transition={{ type: 'spring', stiffness: 280, damping: 26 }}
+        className={`relative overflow-hidden rounded-2xl border px-4 pt-3 pb-3 ${
+          totalNet >= 0
+            ? 'border-lime-500/25 bg-gradient-to-br from-lime-950/40 via-zinc-950 to-black'
+            : 'border-red-500/25 bg-gradient-to-br from-red-950/40 via-zinc-950 to-black'
+        }`}
+        style={{ boxShadow: totalNet >= 0 ? '0 0 56px rgba(132,204,22,0.07)' : '0 0 56px rgba(239,68,68,0.07)' }}
+      >
+        <div className={`absolute -top-8 -right-8 w-32 h-32 rounded-full blur-3xl pointer-events-none opacity-25 ${totalNet >= 0 ? 'bg-lime-400' : 'bg-red-400'}`} />
+        <div className="relative z-10">
+          <div className="flex items-center gap-1.5 mb-2">
+            <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${totalNet >= 0 ? 'bg-lime-400' : 'bg-red-400'}`} />
+            <span className="text-[8px] font-mono uppercase tracking-widest text-zinc-500">Portafolio · {positions.length} posicion{positions.length !== 1 ? 'es' : ''}</span>
+          </div>
+          <div className="flex items-end gap-3 mb-2.5">
+            <div>
+              <div className="text-[2.2rem] font-black font-mono leading-none tracking-tighter text-white tabular-nums">{fmt(Math.round(totalValue))}</div>
+              <div className="text-[7px] font-mono text-zinc-600 mt-0.5 uppercase tracking-widest">valor en mercado</div>
             </div>
-
-            {/* Action buttons row */}
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[8px] font-mono text-zinc-600 uppercase shrink-0">Vender:</span>
-              {[...new Set([Math.min(5, s.shares), Math.min(10, s.shares), s.shares])].filter(v => v > 0).map(qty => (
-                <button
-                  key={qty}
-                  onClick={() => sellQuick(s.corp_id, qty)}
-                  disabled={!!loading}
-                  className="px-2 py-0.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded text-[9px] font-mono text-red-300 disabled:opacity-40 transition-colors"
-                >
-                  {loading === `sell-${s.corp_id}-${qty}` ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : qty === s.shares && qty > 10 ? 'Todo' : `-${qty}`}
-                </button>
-              ))}
-              <span className="text-zinc-700 text-[9px]">·</span>
-              {/* Buy More */}
-              {buyingFor !== s.corp_id ? (
-                <button
-                  onClick={() => setBuyingFor(s.corp_id)}
-                  className="px-2 py-0.5 bg-lime-500/10 hover:bg-lime-500/20 border border-lime-500/30 rounded text-[9px] font-mono text-lime-300 transition-colors"
-                >
-                  + Comprar más
-                </button>
-              ) : (
-                <div className="flex items-center gap-1 mt-0.5">
-                  {[5, 10, 25].map(qty => (
-                    <button key={qty} onClick={() => buyQuick(s.corp_id, qty)} disabled={!!loading}
-                      className="px-2 py-0.5 bg-lime-500/10 hover:bg-lime-500/20 border border-lime-500/30 rounded text-[9px] font-mono text-lime-300 disabled:opacity-40 transition-colors">
-                      {loading === `buy-${s.corp_id}-${qty}` ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : `+${qty}`}
-                    </button>
-                  ))}
-                  <button onClick={() => setBuyingFor(null)} className="text-zinc-600 hover:text-zinc-400 text-[9px] font-mono px-1">✕</button>
+            <div className="flex-1 pb-1 text-right">
+              <div className={`text-[15px] font-black font-mono leading-none tabular-nums ${totalNet >= 0 ? 'text-lime-400' : 'text-red-400'}`}>
+                {totalNet >= 0 ? '+' : ''}{fmt(Math.round(totalNet))}
+              </div>
+              <div className="text-[7px] font-mono text-zinc-600 mt-0.5 uppercase tracking-widest">cashflow / turno</div>
+              {totalValue > 0 && (
+                <div className={`text-[8px] font-mono font-bold mt-1 ${portfolioRoi >= 0 ? 'text-lime-500' : 'text-red-500'}`}>
+                  {portfolioRoi >= 0 ? '+' : ''}{portfolioRoi.toFixed(2)}% ROI
                 </div>
               )}
             </div>
           </div>
-        );
-      })}
+          {/* 4 stat pills */}
+          <div className="grid grid-cols-4 gap-1.5">
+            <div className="bg-black/40 border border-zinc-900 rounded-lg px-2 py-1.5 text-center">
+              <div className="text-[10px] font-black font-mono text-lime-400">{winners}</div>
+              <div className="text-[7px] font-mono text-zinc-600">winners</div>
+            </div>
+            <div className="bg-black/40 border border-zinc-900 rounded-lg px-2 py-1.5 text-center">
+              <div className="text-[10px] font-black font-mono text-red-400">{losers}</div>
+              <div className="text-[7px] font-mono text-zinc-600">losers</div>
+            </div>
+            <div className="bg-black/40 border border-zinc-900 rounded-lg px-2 py-1.5 text-center">
+              <div className="text-[10px] font-black font-mono text-amber-400">{ceoCount}</div>
+              <div className="text-[7px] font-mono text-zinc-600">CEO</div>
+            </div>
+            <div className="bg-black/40 border border-zinc-900 rounded-lg px-2 py-1.5 text-center">
+              <div className="text-[10px] font-black font-mono text-cyan-400">{fmt(Math.round(totalDiv))}</div>
+              <div className="text-[7px] font-mono text-zinc-600">div bruto</div>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* ── Position Cards ── */}
+      <div className="space-y-2">
+        {positions.map((p, idx) => (
+          <PositionRow key={p.corp_id} pos={p} idx={idx} loading={loading} onTrade={trade} />
+        ))}
+      </div>
     </div>
+  );
+}
+
+// ── Single Position Row — terminal-style trader card ─────────────────────────
+function PositionRow({ pos, idx, loading, onTrade }) {
+  const { corp_id, name, shares, totalShares, fmv, value, net, div, maint, sharePrice, supply, ss, isCeo, score, corp } = pos;
+  const myPctOfCorp = (shares / totalShares) * 100;
+  const sellPrice   = sharePrice * 0.97;
+  const buyPrice    = sharePrice * 1.03;
+  const accentLeft  = net >= 0 ? 'bg-lime-400' : 'bg-red-400';
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: idx * 0.04, type: 'spring', stiffness: 280, damping: 26 }}
+      className={`rounded-2xl overflow-hidden bg-gradient-to-br from-zinc-900/85 via-zinc-950 to-black border ${ss.border} ${ss.glow}`}
+    >
+      <div className="flex">
+        <div className={`w-[3px] shrink-0 self-stretch ${accentLeft}`} />
+        <div className="flex-1 min-w-0 px-3 py-3">
+          {/* Header */}
+          <div className="flex items-start justify-between gap-2 mb-2.5">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+                <span className="font-black text-[14px] text-white leading-snug tracking-tight">{name}</span>
+                {isCeo && <Crown className="h-3 w-3 text-orange-400 shrink-0" />}
+                <span className={`text-[8px] font-mono font-bold px-1.5 py-0.5 rounded-full ${ss.bg} ${ss.accent} border ${ss.border}`}>
+                  {shares}sh · {myPctOfCorp.toFixed(0)}%
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[8px] font-mono text-zinc-600 uppercase tracking-wide">{corp.district}</span>
+                <div className="flex gap-[3px] items-center">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className={`w-1 h-1 rounded-full ${i < score ? ss.bar : 'bg-zinc-800'}`} />
+                  ))}
+                </div>
+                <span className="text-[7px] font-mono text-zinc-700">{fmtDec(sharePrice)}/sh</span>
+              </div>
+            </div>
+            <div className="text-right shrink-0">
+              <div className="text-[15px] font-black font-mono leading-none text-white tabular-nums">{fmt(Math.round(value))}</div>
+              <div className="text-[7px] font-mono text-zinc-600 mt-0.5 uppercase tracking-widest">valor</div>
+            </div>
+          </div>
+
+          {/* Trading metrics — div / maint / net */}
+          <div className="grid grid-cols-3 gap-1.5 mb-2.5">
+            <div className="bg-black/45 border border-zinc-900 rounded-lg px-2 py-1.5">
+              <div className="text-[10px] font-black font-mono text-lime-500/80 tabular-nums leading-none">+{fmt(Math.round(div))}</div>
+              <div className="text-[7px] font-mono text-zinc-600 leading-none mt-1">dividendo</div>
+            </div>
+            <div className="bg-black/45 border border-zinc-900 rounded-lg px-2 py-1.5">
+              <div className="text-[10px] font-black font-mono text-red-500/80 tabular-nums leading-none">−{fmt(Math.round(maint))}</div>
+              <div className="text-[7px] font-mono text-zinc-600 leading-none mt-1">mantenim.</div>
+            </div>
+            <div className={`rounded-lg px-2 py-1.5 border ${net >= 0 ? 'bg-lime-500/12 border-lime-500/35' : 'bg-red-500/12 border-red-500/35'}`}>
+              <div className={`text-[10px] font-black font-mono tabular-nums leading-none ${net >= 0 ? 'text-lime-400' : 'text-red-400'}`}>
+                = {net >= 0 ? '+' : ''}{fmt(Math.round(net))}
+              </div>
+              <div className="text-[7px] font-mono text-zinc-600 leading-none mt-1">aporte / t</div>
+            </div>
+          </div>
+
+          {/* Action buttons: split BUY (left) and SELL (right) */}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <div className="text-[7px] font-mono uppercase text-zinc-600 tracking-wider mb-1 flex items-center gap-1">
+                <TrendingUp className="h-2 w-2 text-lime-400" /> Comprar más
+              </div>
+              <div className="flex gap-1">
+                {[5, 10].map(qty => (
+                  <button key={qty}
+                    onClick={() => onTrade(corp_id, qty, 'BUY_SHARES')}
+                    disabled={!!loading || supply < qty}
+                    className="flex-1 py-1.5 rounded-lg border text-center font-mono font-bold transition-all active:scale-95 disabled:opacity-25 bg-lime-400/8 hover:bg-lime-400/18 border-lime-500/20 hover:border-lime-500/35 text-lime-400">
+                    {loading === `BUY_SHARES-${corp_id}-${qty}` ? (
+                      <Loader2 className="h-2.5 w-2.5 animate-spin mx-auto" />
+                    ) : (
+                      <>
+                        <div className="text-[10px] font-black leading-none">+{qty}</div>
+                        <div className="text-[6px] opacity-50 mt-0.5">{fmt(Math.round(qty * buyPrice))}</div>
+                      </>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div className="text-[7px] font-mono uppercase text-zinc-600 tracking-wider mb-1 flex items-center gap-1">
+                <TrendingDown className="h-2 w-2 text-red-400" /> Vender
+              </div>
+              <div className="flex gap-1">
+                {[Math.min(5, shares), Math.min(10, shares), shares].filter((v, i, a) => v > 0 && a.indexOf(v) === i).slice(0, 2).map(qty => (
+                  <button key={qty}
+                    onClick={() => onTrade(corp_id, qty, 'SELL_SHARES')}
+                    disabled={!!loading}
+                    className="flex-1 py-1.5 rounded-lg border text-center font-mono font-bold transition-all active:scale-95 disabled:opacity-25 bg-red-500/8 hover:bg-red-500/18 border-red-500/25 hover:border-red-500/40 text-red-400">
+                    {loading === `SELL_SHARES-${corp_id}-${qty}` ? (
+                      <Loader2 className="h-2.5 w-2.5 animate-spin mx-auto" />
+                    ) : (
+                      <>
+                        <div className="text-[10px] font-black leading-none">{qty === shares && qty > 10 ? 'Todo' : `-${qty}`}</div>
+                        <div className="text-[6px] opacity-50 mt-0.5">~{fmt(Math.round(qty * sellPrice))}</div>
+                      </>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </motion.div>
   );
 }
 
