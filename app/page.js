@@ -666,6 +666,114 @@ function BottomNav({ section, setSection }) {
   );
 }
 
+// ── Sección Inicio — Sub-components ──────────────────────────────────────────
+
+function StatPill({ label, value, color = 'cyan' }) {
+  const c = {
+    lime:   'text-lime-400 bg-lime-500/10 border-lime-500/25',
+    cyan:   'text-cyan-400 bg-cyan-500/10 border-cyan-500/25',
+    amber:  'text-amber-400 bg-amber-500/10 border-amber-500/25',
+    orange: 'text-orange-400 bg-orange-500/10 border-orange-500/25',
+    red:    'text-red-400 bg-red-500/10 border-red-500/25',
+  }[color] || 'text-zinc-400 bg-zinc-800 border-zinc-700';
+  return (
+    <div className={`border rounded-xl px-2.5 py-2 ${c}`}>
+      <div className="text-[7px] font-mono uppercase tracking-widest opacity-50 mb-0.5 leading-none">{label}</div>
+      <div className="text-xs font-black font-mono leading-none">{value}</div>
+    </div>
+  );
+}
+
+function AlertChip({ icon, text, color = 'amber' }) {
+  const c = {
+    red:    'border-red-500/40 bg-red-500/10 text-red-300',
+    amber:  'border-amber-500/40 bg-amber-500/10 text-amber-300',
+    indigo: 'border-indigo-500/40 bg-indigo-500/10 text-indigo-300',
+    lime:   'border-lime-500/40 bg-lime-500/10 text-lime-300',
+    cyan:   'border-cyan-500/40 bg-cyan-500/10 text-cyan-300',
+  }[color] || 'border-zinc-700 bg-zinc-800 text-zinc-300';
+  return (
+    <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-[10px] font-mono whitespace-nowrap shrink-0 ${c}`}>
+      <span className="text-sm leading-none">{icon}</span>
+      <span>{text}</span>
+    </div>
+  );
+}
+
+function PositionCard({ holding, index }) {
+  const { corpName, shares, net, value, isCeo, sc } = holding;
+  const isUp = net >= 0;
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: index * 0.06, type: 'spring', stiffness: 260, damping: 24 }}
+      className={`w-36 shrink-0 rounded-xl border p-3 ${
+        isUp ? (sc?.border || 'border-zinc-700') + ' ' + (sc?.bg || '') + ' ' + (sc?.glow || '')
+             : 'border-red-900/40 bg-red-950/10'
+      }`}
+    >
+      <div className="flex items-center gap-1 mb-0.5">
+        {isCeo && <Crown className="h-3 w-3 text-orange-400 shrink-0" />}
+        <span className="text-[10px] font-bold text-white truncate">{corpName}</span>
+      </div>
+      <div className={`text-xl font-black font-mono leading-tight ${isUp ? (sc?.accent || 'text-lime-400') : 'text-red-400'}`}>
+        {net >= 0 ? '+' : ''}{fmt(Math.round(net))}
+      </div>
+      <div className="text-[8px] font-mono text-zinc-600 mb-2">por turno</div>
+      <div className="flex items-center justify-between">
+        <span className="text-[8px] font-mono text-zinc-600">{shares} sh</span>
+        <span className="text-[9px] font-mono text-zinc-400">{fmt(Math.round(value))}</span>
+      </div>
+    </motion.div>
+  );
+}
+
+function GossipFeed({ gossipSections, auditTurn }) {
+  const [section, setSection] = useState(gossipSections[0]?.id || '');
+  const active = gossipSections.find(s => s.id === section);
+  if (!active && gossipSections.length > 0 && !section) { }
+  return (
+    <div className="bg-zinc-950 border border-zinc-900 rounded-xl overflow-hidden">
+      <div className="px-3 pt-2.5 border-b border-zinc-900/60 pb-0">
+        <div className="flex items-center gap-2 mb-2">
+          <History className="h-3 w-3 text-zinc-600" />
+          <span className="text-[9px] font-mono uppercase text-zinc-500 tracking-wider">Gossip · Turno #{auditTurn || '—'}</span>
+        </div>
+        <div className="flex gap-1 overflow-x-auto pb-2" style={{ scrollbarWidth: 'none' }}>
+          {gossipSections.map(s => (
+            <button key={s.id} onClick={() => setSection(s.id)}
+              className={`px-2 py-0.5 text-[8px] font-mono uppercase rounded border whitespace-nowrap shrink-0 transition-colors ${
+                section === s.id
+                  ? 'bg-lime-400/20 border-lime-500/40 text-lime-300 font-bold'
+                  : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'
+              }`}>
+              {s.label}{s.items.length > 0 ? ` (${s.items.length})` : ''}
+            </button>
+          ))}
+        </div>
+      </div>
+      {active && (
+        <div className="px-3 py-2.5 max-h-44 overflow-y-auto space-y-1.5" style={{ scrollbarWidth: 'thin', scrollbarColor: '#3f3f46 transparent' }}>
+          {active.items.length === 0 ? (
+            <p className="text-[10px] text-zinc-600 italic text-center py-3">Sin actividad.</p>
+          ) : (
+            active.items.map((item, i) => (
+              <motion.div key={i}
+                initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.03 }}
+                className="flex items-start gap-2">
+                <span className="text-sm shrink-0 leading-none mt-px">{item.icon}</span>
+                <span className={`text-[10px] leading-relaxed ${item.cls || 'text-zinc-400'}`}>{item.text}</span>
+              </motion.div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Sección Inicio — Dashboard & Gossip ──────────────────────────────────────
 function InicioSection({ dashboard, market, player, turn, refresh, auditTurn, lastGlobalEvent, portfolio, audit, pendingOrders, pData, turnSummary, netWorth }) {
 
@@ -682,7 +790,8 @@ function InicioSection({ dashboard, market, player, turn, refresh, auditTurn, la
     const maint  = myPct * Number(corp.fair_market_value) * 0.015 * costMult;
     const net    = div - maint;
     const isCeo  = corp.ceo_player_id === player.id;
-    return { ...h, corpName: corp.name, value, div, maint, net, isCeo };
+    const sc     = scoreStyle(corpScore(corp, turn));
+    return { ...h, corpName: corp.name, value, div, maint, net, isCeo, sc };
   }).filter(Boolean);
 
   const totalDiv    = corpBreakdown.reduce((s, c) => s + c.div, 0);
@@ -706,6 +815,20 @@ function InicioSection({ dashboard, market, player, turn, refresh, auditTurn, la
     .filter(c => c.score >= 4 && ((c.total_shares || 100) - (c.owned_shares || 0)) > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, 3);
+
+  const isUp      = netCashflow >= 0;
+  const flowRatio = (totalDiv + totalMaint) > 0 ? Math.min(100, (totalDiv / (totalDiv + totalMaint)) * 100) : 50;
+
+  // Alert chips for the strip
+  const alertChips = [
+    ...danger.map(h => ({ icon: '📉', text: `${h.corpName} −${fmt(Math.abs(Math.round(h.net)))}/t`, color: 'red' })),
+    ...pendingOrders.slice(0, 2).map(o => ({
+      icon: o.order_type === 'BUY_SHARES' ? '📥' : '📤',
+      text: `${o.order_type === 'BUY_SHARES' ? '+' : '-'}${o.shares}sh ${o.corp_name || ''}`.trim(),
+      color: 'amber',
+    })),
+    ...(lastGlobalEvent ? [{ icon: '🌐', text: lastGlobalEvent.label || 'Evento global', color: 'indigo' }] : []),
+  ];
 
   const [auditOpen, setAuditOpen] = useState(false);
   const [gossipSection, setGossipSection] = useState('mercado');
@@ -796,131 +919,120 @@ function InicioSection({ dashboard, market, player, turn, refresh, auditTurn, la
 
   return (
     <div className="space-y-2">
-      {/* ── Panel de Control ── */}
-      <div className={`border rounded-xl p-3 ${netCashflow >= 0 ? 'bg-gradient-to-br from-zinc-950 to-black border-lime-600/25' : 'bg-gradient-to-br from-zinc-950 to-black border-red-600/25'}`}>
-        {/* Portafolio + Flujo/T — 2 cols */}
-        <div className="grid grid-cols-2 gap-2 mb-2.5">
-          <div className="bg-zinc-900/60 rounded-lg px-2.5 py-2">
-            <div className="text-[8px] font-mono uppercase text-zinc-500 mb-0.5">Portafolio</div>
-            <div className="text-sm font-black font-mono text-lime-400">{fmt(Math.round(portfolioValue))}</div>
-          </div>
-          <div className={`rounded-lg px-2.5 py-2 ${netCashflow >= 0 ? 'bg-lime-900/25' : 'bg-red-900/25'}`}>
-            <div className="text-[8px] font-mono uppercase text-zinc-500 mb-0.5">Flujo/T</div>
-            <div className={`text-sm font-black font-mono ${netCashflow >= 0 ? 'text-lime-400' : 'text-red-400'}`}>{netCashflow >= 0 ? '+' : ''}{fmt(Math.round(netCashflow))}</div>
-          </div>
-        </div>
+      {/* ── HERO — Status del turno ── */}
+      <motion.div
+        initial={{ opacity: 0, y: -8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ type: 'spring', stiffness: 260, damping: 28 }}
+        className={`relative overflow-hidden rounded-2xl border px-4 pt-4 pb-3 ${
+          isUp
+            ? 'border-lime-500/25 bg-gradient-to-br from-lime-950/50 via-zinc-950 to-black'
+            : 'border-red-500/25 bg-gradient-to-br from-red-950/50 via-zinc-950 to-black'
+        }`}
+        style={{ boxShadow: isUp ? '0 0 56px rgba(132,204,22,0.07)' : '0 0 56px rgba(239,68,68,0.07)' }}
+      >
+        {/* Decorative orb */}
+        <div className={`absolute -top-8 -right-8 w-32 h-32 rounded-full blur-3xl pointer-events-none opacity-25 ${isUp ? 'bg-lime-400' : 'bg-red-400'}`} />
 
-        {/* Visual income vs expense breakdown */}
-        {corpBreakdown.length > 0 && (
-          <div className="bg-zinc-900/50 rounded-lg px-2.5 py-2 space-y-1.5">
-            <div className="flex items-center justify-between text-[9px] font-mono">
-              <span className="text-lime-400 font-bold flex items-center gap-1"><TrendingUp className="h-3 w-3" /> ENTRA: +{fmt(Math.round(totalDiv))}</span>
-              <span className="text-red-400 font-bold flex items-center gap-1"><TrendingDown className="h-3 w-3" /> SALE: -{fmt(Math.round(totalMaint))}</span>
+        <div className="relative z-10">
+          {/* Status chip */}
+          <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[8px] font-mono uppercase tracking-wider mb-2.5 ${
+            isUp
+              ? 'border-lime-500/30 text-lime-400 bg-lime-500/10'
+              : 'border-red-500/30 text-red-400 bg-red-500/10'
+          }`}>
+            <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${isUp ? 'bg-lime-400' : 'bg-red-400'}`} />
+            {isUp ? '▲ flujo positivo' : '▼ flujo negativo'} · T{turn}
+          </div>
+
+          {/* Big number + bar */}
+          <div className="flex items-end gap-3 mb-3">
+            <div>
+              <div className={`text-[2.8rem] font-black font-mono leading-none tracking-tighter ${isUp ? 'text-lime-400' : 'text-red-400'}`}>
+                {netCashflow >= 0 ? '+' : ''}{fmt(Math.round(netCashflow))}
+              </div>
+              <div className="text-[8px] font-mono text-zinc-600 mt-0.5 uppercase tracking-widest">flujo / turno</div>
             </div>
-            {/* Progress bar visual */}
-            {(totalDiv + totalMaint) > 0 && (
-              <div className="w-full h-2.5 bg-red-900/40 rounded-full overflow-hidden flex">
-                <div
-                  className="h-full bg-lime-500 rounded-full transition-all"
-                  style={{ width: `${Math.min(100, (totalDiv / (totalDiv + totalMaint)) * 100)}%` }}
-                />
+            {corpBreakdown.length > 0 && (
+              <div className="flex-1 pb-1.5 space-y-1 min-w-0">
+                <div className="flex justify-between text-[8px] font-mono">
+                  <span className="text-lime-500">▲ {fmt(Math.round(totalDiv))}</span>
+                  <span className="text-red-500">▼ {fmt(Math.round(totalMaint))}</span>
+                </div>
+                <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full bg-lime-500 rounded-full"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${flowRatio}%` }}
+                    transition={{ duration: 1, ease: 'easeOut', delay: 0.2 }}
+                  />
+                </div>
               </div>
             )}
           </div>
-        )}
 
-        {/* IC Projection row */}
-        <div className="mt-2 flex items-center gap-2 bg-orange-900/20 border border-orange-500/20 rounded-lg px-2.5 py-1.5">
-          <Zap className="h-3.5 w-3.5 text-orange-400 shrink-0" />
-          <div className="flex-1 min-w-0 text-[9px] font-mono">
-            <span className="text-zinc-500 uppercase">IC este turno:</span>
-            <span className="text-orange-300 font-bold ml-1">+{estimatedIcThisTurn}</span>
-            <span className="text-zinc-600 mx-1">·</span>
-            <span className="text-zinc-500 uppercase">próximo:</span>
-            <span className="text-orange-400/70 font-bold ml-1">~{estimatedIcNextTurn}</span>
+          {/* 3-stat pills */}
+          <div className="grid grid-cols-3 gap-1.5">
+            <StatPill label="Portafolio" value={fmt(Math.round(portfolioValue))} color="cyan" />
+            <StatPill label="Cash" value={fmt(Math.round(cashValue))} color={cashValue > 2000 ? 'lime' : cashValue > 300 ? 'amber' : 'red'} />
+            <StatPill label="IC / turno" value={`+${estimatedIcThisTurn}`} color="orange" />
           </div>
-          <span className="text-[8px] font-mono text-zinc-600 shrink-0 uppercase">{pData.player_role === 'DATA_SCIENTIST' ? '+50% DS' : pData.player_role === 'ECONOMIST' ? '+20% EC' : 'base'}</span>
         </div>
-      </div>
+      </motion.div>
 
-      {/* Corp-by-corp breakdown */}
+      {/* ── ALERT STRIP ── */}
+      {alertChips.length > 0 && (
+        <div className="overflow-x-auto -mx-2 px-2" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+          <motion.div
+            className="flex gap-1.5 pb-0.5"
+            style={{ width: 'max-content' }}
+            initial={{ opacity: 0, x: 10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.3, delay: 0.15 }}
+          >
+            {alertChips.map((a, i) => <AlertChip key={i} {...a} />)}
+          </motion.div>
+        </div>
+      )}
+
+      {/* ── MIS POSICIONES — horizontal scroll ── */}
       {corpBreakdown.length > 0 && (
-        <Card className="bg-zinc-950 border-zinc-900">
-          <CardHeader className="py-2 px-3">
-            <CardTitle className="text-lime-400 font-mono uppercase text-xs flex items-center gap-1.5">
-              <Building2 className="h-3.5 w-3.5" /> Portfolio — {corpBreakdown.length} corp{corpBreakdown.length !== 1 ? 's' : ''}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-3 pb-3 space-y-1.5">
-            {corpBreakdown.map(h => (
-              <div key={h.corp_id} className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 border ${h.net >= 0 ? 'border-zinc-800 bg-zinc-900/40' : 'border-red-900/30 bg-red-950/10'}`}>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {/* Full corp name — no truncate */}
-                    <span className="text-xs font-bold text-white leading-tight">{h.corpName}</span>
-                    {h.isCeo && <Crown className="h-3 w-3 text-orange-400 shrink-0" />}
-                    <span className="text-[9px] font-mono text-zinc-600">{h.shares}sh</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-0.5 text-[9px] font-mono">
-                    <span className="text-lime-500">▲{fmt(Math.round(h.div))}</span>
-                    <span className="text-red-500">▼{fmt(Math.round(h.maint))}</span>
-                  </div>
-                </div>
-                <div className="text-right shrink-0">
-                  <div className={`font-mono text-xs font-bold ${h.net >= 0 ? 'text-lime-400' : 'text-red-400'}`}>{h.net >= 0 ? '+' : ''}{fmt(Math.round(h.net))}/t</div>
-                  <div className="text-[9px] font-mono text-zinc-500">{fmt(Math.round(h.value))}</div>
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[9px] font-mono uppercase text-zinc-500 tracking-wider flex items-center gap-1.5">
+              <Building2 className="h-3 w-3" /> Mis posiciones · {corpBreakdown.length} corps
+            </span>
+            <span className="text-[8px] font-mono text-zinc-700">← deslizá →</span>
+          </div>
+          <div className="overflow-x-auto -mx-2 px-2" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+            <div className="flex gap-2 pb-1" style={{ width: 'max-content' }}>
+              {corpBreakdown.map((h, i) => <PositionCard key={h.corp_id} holding={h} index={i} />)}
+            </div>
+          </div>
+        </div>
       )}
 
-      {/* Top Picks */}
+      {/* ── TOP PICKS ── */}
       {topPicks.length > 0 && (
-        <Card className="bg-zinc-950 border-zinc-900">
-          <CardHeader className="py-2 px-3">
-            <CardTitle className="text-lime-400 font-mono uppercase text-xs flex items-center gap-1.5">
-              🔥 Mejores picks hoy
-            </CardTitle>
-            <CardDescription className="text-zinc-500 text-[10px]">Mayor rentabilidad disponible</CardDescription>
-          </CardHeader>
-          <CardContent className="px-3 pb-3 space-y-2">
-            {topPicks.map(c => (
-              <MiniCorpCard key={c.id} corp={c} player={player} refresh={refresh} />
-            ))}
-          </CardContent>
-        </Card>
+        <div>
+          <div className="text-[9px] font-mono uppercase text-zinc-500 tracking-wider mb-1.5">🔥 Picks del momento</div>
+          <div className="space-y-1.5">
+            {topPicks.map(c => <MiniCorpCard key={c.id} corp={c} player={player} refresh={refresh} />)}
+          </div>
+        </div>
       )}
 
-      {/* Danger Holdings */}
-      {danger.length > 0 && (
-        <Card className="bg-zinc-950 border-red-900/40">
-          <CardHeader className="py-2 px-3">
-            <CardTitle className="text-red-400 font-mono uppercase text-xs flex items-center gap-1.5">
-              <AlertTriangle className="h-3.5 w-3.5" /> Atención — holdings negativos
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-3 pb-3 space-y-1.5">
-            {danger.map(h => (
-              <div key={h.corp_id} className="flex items-center justify-between bg-red-950/20 border border-red-900/30 rounded-lg px-3 py-1.5">
-                <span className="text-xs font-bold text-white">{h.corpName}</span>
-                <span className="font-mono text-xs text-red-400 font-bold">{fmt(Math.round(h.net))}/turno</span>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
+      {/* Danger holdings — already shown in alert strip + position cards, no extra card needed */}
 
-      {/* Pending Orders */}
+      {/* ── COLA DE ÓRDENES ── */}
       {pendingOrders.length > 0 && (
-        <Card className="bg-zinc-950 border-zinc-900">
-          <CardHeader className="py-2 px-3">
-            <CardTitle className="text-orange-400 font-mono uppercase text-xs flex items-center gap-1.5">
-              <ShoppingCart className="h-3.5 w-3.5" /> Cola · Turno {turn}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-3 pb-3 space-y-1.5">
+        <div className="bg-zinc-950 border border-zinc-900 rounded-xl overflow-hidden">
+          <div className="px-3 py-2 border-b border-zinc-900/60 flex items-center gap-2">
+            <ShoppingCart className="h-3 w-3 text-orange-400" />
+            <span className="text-[9px] font-mono uppercase text-orange-400 font-bold tracking-wider">Cola · T{turn}</span>
+            <span className="ml-auto text-[8px] font-mono text-zinc-700">{pendingOrders.length} orden{pendingOrders.length !== 1 ? 'es' : ''}</span>
+          </div>
+          <div className="px-3 py-2 space-y-1.5">
             <AnimatePresence>
               {pendingOrders.map(o => (
                 <ActionReceipt key={o.id} order={o} onCancel={async (id) => {
@@ -929,82 +1041,51 @@ function InicioSection({ dashboard, market, player, turn, refresh, auditTurn, la
                 }} />
               ))}
             </AnimatePresence>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
 
       {/* Gossip Feed — turn summary */}
-      {gossipSections.length > 0 && (
-        <Card className="bg-zinc-950 border-zinc-900">
-          <CardHeader className="py-2 px-3">
-            <CardTitle className="text-lime-400 font-mono uppercase text-xs flex items-center gap-1.5">
-              <History className="h-3.5 w-3.5" /> Turno #{auditTurn} — Gossip Feed
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-3 pb-3">
-            {/* Section pills */}
-            <div className="flex gap-1 flex-wrap mb-2">
-              {gossipSections.map(s => {
-                const count = s.items.length;
-                return (
-                  <button
-                    key={s.id}
-                    onClick={() => setGossipSection(s.id)}
-                    className={`px-2 py-0.5 text-[8px] font-mono uppercase rounded border transition-colors ${gossipSection === s.id ? 'bg-lime-400/20 border-lime-500/40 text-lime-300 font-bold' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}
-                  >
-                    {s.label} {count > 0 && <span className="ml-0.5 opacity-70">({count})</span>}
-                  </button>
-                );
-              })}
-            </div>
-            {/* Items */}
-            {activeGossip && (
-              <div className="space-y-1 max-h-40 overflow-y-auto">
-                {activeGossip.items.length === 0 ? (
-                  <p className="text-[10px] text-zinc-600 italic text-center py-2">Sin actividad en esta categoría.</p>
-                ) : (
-                  activeGossip.items.map((item, i) => (
-                    <div key={i} className="flex items-start gap-1.5 py-0.5 border-b border-zinc-900/60">
-                      <span className="text-sm shrink-0 leading-none mt-0.5">{item.icon}</span>
-                      <span className={`text-[10px] ${item.cls || 'text-zinc-400'}`}>{item.text}</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
+      {gossipSections.length > 0 && <GossipFeed gossipSections={gossipSections} auditTurn={auditTurn} />}
 
       {/* Personal Audit (collapsible) */}
-      <Card className="bg-zinc-950 border-zinc-900">
+      <div className="bg-zinc-950 border border-zinc-900 rounded-xl overflow-hidden">
         <button
           onClick={() => setAuditOpen(o => !o)}
           className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-zinc-900/40 transition-colors"
         >
-          <span className="text-zinc-400 font-mono uppercase text-xs flex items-center gap-1.5">
-            <History className="h-3.5 w-3.5" /> Mi Auditoría — Turno #{auditTurn || '—'}
+          <span className="text-[9px] font-mono uppercase tracking-wider text-zinc-500 flex items-center gap-1.5">
+            <History className="h-3 w-3 text-zinc-600" /> Mi Auditoría · T#{auditTurn || '—'}
           </span>
-          {auditOpen ? <ChevronDown className="h-4 w-4 text-zinc-500" /> : <ChevronRight className="h-4 w-4 text-zinc-500" />}
+          <div className="flex items-center gap-1.5">
+            {audit.length > 0 && (
+              <span className="text-[8px] font-mono text-zinc-700">{audit.length} mov.</span>
+            )}
+            {auditOpen ? <ChevronDown className="h-3.5 w-3.5 text-zinc-600" /> : <ChevronRight className="h-3.5 w-3.5 text-zinc-600" />}
+          </div>
         </button>
         <AnimatePresence>
           {auditOpen && (
-            <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
-              <div className="px-3 pb-3">
+            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.18 }} className="overflow-hidden">
+              <div className="border-t border-zinc-900/60 px-3 pb-3 pt-2">
                 {audit.length === 0 ? (
-                  <p className="text-xs text-zinc-500 italic">Sin movimientos.</p>
+                  <p className="text-[10px] text-zinc-600 italic text-center py-3">Sin movimientos este turno.</p>
                 ) : (
-                  <div className="space-y-0.5 max-h-48 overflow-y-auto">
+                  <div className="space-y-0 max-h-48 overflow-y-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: '#3f3f46 transparent' }}>
                     {audit.map((t, i) => (
-                      <div key={i} className="flex items-center justify-between py-1 border-b border-zinc-900 text-xs">
+                      <motion.div key={i}
+                        initial={{ opacity: 0, x: -4 }} animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: i * 0.025 }}
+                        className="flex items-center justify-between py-1.5 border-b border-zinc-900/50 last:border-0"
+                      >
                         <div className="flex items-center gap-1.5 flex-1 min-w-0">
                           <TxBadge type={t.tx_type} />
-                          <span className="text-zinc-400 text-[10px] truncate">{t.description}</span>
+                          <span className="text-zinc-500 text-[10px] truncate">{t.description}</span>
                         </div>
-                        <span className={`font-mono font-bold text-xs shrink-0 ${Number(t.amount) >= 0 ? 'text-lime-400' : 'text-red-400'}`}>
+                        <span className={`font-mono font-bold text-[11px] shrink-0 ${Number(t.amount) >= 0 ? 'text-lime-400' : 'text-red-400'}`}>
                           {Number(t.amount) >= 0 ? '+' : ''}{fmtDec(t.amount)}
                         </span>
-                      </div>
+                      </motion.div>
                     ))}
                   </div>
                 )}
@@ -1012,7 +1093,7 @@ function InicioSection({ dashboard, market, player, turn, refresh, auditTurn, la
             </motion.div>
           )}
         </AnimatePresence>
-      </Card>
+      </div>
     </div>
   );
 }
@@ -1033,13 +1114,17 @@ function generateSparkline(corp) {
     ys.push(y);
   }
   const minY = Math.min(...ys); const maxY = Math.max(...ys); const range = maxY - minY || 0.1;
-  const pts = ys.map((v, i) => {
+  const coords = ys.map((v, i) => {
     const px = ((i / (N - 1)) * W).toFixed(1);
     const py = (H - ((v - minY) / range) * (H - 4) - 2).toFixed(1);
-    return `${px},${py}`;
-  }).join(' ');
+    return [px, py];
+  });
+  // Build SVG path d string (M + L commands) for motion.path pathLength animation
+  const d = coords.map(([px, py], i) => `${i === 0 ? 'M' : 'L'}${px},${py}`).join(' ');
+  // Also keep pts for the end-dot calculation
+  const pts = coords.map(([px, py]) => `${px},${py}`).join(' ');
   const isUp = ys[N - 1] >= ys[0];
-  return { pts, isUp, color: isUp ? '#84cc16' : '#f87171' };
+  return { d, pts, isUp, color: isUp ? '#84cc16' : '#f87171' };
 }
 
 // ── Score color palette ───────────────────────────────────────────────────────
@@ -1141,25 +1226,40 @@ function SmartMarketTab({ market, player, portfolio, turn, refresh, playerLevel 
 
   const scored = market
     .map(c => ({ ...c, score: corpScore(c, turn) }))
-    .sort((a, b) => {
-      const aLocked = Number(a.required_level || 0) > 1 && playerLevel < Number(a.required_level || 0);
-      const bLocked = Number(b.required_level || 0) > 1 && playerLevel < Number(b.required_level || 0);
-      if (aLocked !== bLocked) return aLocked ? 1 : -1;
-      return b.score - a.score || Number(b.fair_market_value) - Number(a.fair_market_value);
-    });
+    .sort((a, b) => b.score - a.score || Number(b.fair_market_value) - Number(a.fair_market_value));
 
   const filtered = scored.filter(c => {
-    if (filter === 'hot')    return c.score >= 4;
+    const isLocked = Number(c.required_level || 0) > 1 && playerLevel < Number(c.required_level || 0);
+    if (filter === 'hot')    return c.score >= 4 && !isLocked;
     if (filter === 'mine')   return myCorpIds.has(c.id);
-    if (filter === 'locked') return Number(c.required_level || 0) > 1;
+    if (filter === 'locked') return isLocked;
     return true;
   });
+
+  // Zone grouping for 'all' view
+  const zonedView = filter === 'all';
+  const zoneHot     = filtered.filter(c => c.score >= 4 && !(Number(c.required_level || 0) > 1 && playerLevel < Number(c.required_level || 0)));
+  const zoneNormal  = filtered.filter(c => c.score < 4  && !(Number(c.required_level || 0) > 1 && playerLevel < Number(c.required_level || 0)));
+  const zoneLocked  = filtered.filter(c => Number(c.required_level || 0) > 1 && playerLevel < Number(c.required_level || 0));
+
+  const renderCard = (corp) => (
+    <SmartCorpCard
+      key={corp.id}
+      corp={corp}
+      player={player}
+      myShares={portfolio.find(p => p.corp_id === corp.id)?.shares || 0}
+      isExpanded={expanded === corp.id}
+      onToggle={() => setExpanded(e => e === corp.id ? null : corp.id)}
+      refresh={refresh}
+      playerLevel={playerLevel}
+    />
+  );
 
   return (
     <div className="space-y-2">
       {/* Filter pills */}
       <div className="flex gap-1.5 flex-wrap">
-        {[['all','Todos'],['hot','🔥 Hot'],['mine','Mi portafolio'],['locked','🔒 Avanzadas']].map(([id, label]) => (
+        {[['all','Todos'],['hot','🔥 Hot'],['mine','Mis corps'],['locked','🔒 Avanzadas']].map(([id, label]) => (
           <button
             key={id}
             onClick={() => setFilter(id)}
@@ -1175,21 +1275,46 @@ function SmartMarketTab({ market, player, portfolio, turn, refresh, playerLevel 
         </div>
       </div>
 
-      {/* Corp cards */}
-      <div className="space-y-1.5">
-        {filtered.map(corp => (
-          <SmartCorpCard
-            key={corp.id}
-            corp={corp}
-            player={player}
-            myShares={portfolio.find(p => p.corp_id === corp.id)?.shares || 0}
-            isExpanded={expanded === corp.id}
-            onToggle={() => setExpanded(e => e === corp.id ? null : corp.id)}
-            refresh={refresh}
-            playerLevel={playerLevel}
-          />
-        ))}
-      </div>
+      {/* Zones (only in 'all' view) */}
+      {zonedView ? (
+        <div className="space-y-3">
+          {/* 🔥 Zone */}
+          {zoneHot.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="text-[9px] font-mono uppercase tracking-widest text-orange-400 font-bold">🔥 En Llamas</span>
+                <div className="flex-1 h-px bg-gradient-to-r from-orange-500/30 to-transparent" />
+                <span className="text-[8px] font-mono text-zinc-700">score ≥4</span>
+              </div>
+              <div className="space-y-1.5">{zoneHot.map(renderCard)}</div>
+            </div>
+          )}
+
+          {/* 📊 Zone */}
+          {zoneNormal.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="text-[9px] font-mono uppercase tracking-widest text-zinc-500 font-bold">📊 Mercado General</span>
+                <div className="flex-1 h-px bg-gradient-to-r from-zinc-700/40 to-transparent" />
+              </div>
+              <div className="space-y-1.5">{zoneNormal.map(renderCard)}</div>
+            </div>
+          )}
+
+          {/* 🔒 Zone */}
+          {zoneLocked.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="text-[9px] font-mono uppercase tracking-widest text-zinc-600 font-bold">🔒 Nivel Avanzado</span>
+                <div className="flex-1 h-px bg-gradient-to-r from-zinc-800/60 to-transparent" />
+              </div>
+              <div className="space-y-1.5 opacity-60">{zoneLocked.map(renderCard)}</div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-1.5">{filtered.map(renderCard)}</div>
+      )}
     </div>
   );
 }
@@ -1279,20 +1404,30 @@ function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh, 
             </span>
             {!isLevelLocked && (
               <svg width="72" height="24" className="overflow-visible block">
-                <polyline
-                  points={spark.pts}
+                <motion.path
+                  d={spark.d}
                   fill="none"
                   stroke={spark.color}
                   strokeWidth="1.5"
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   opacity="0.85"
+                  initial={{ pathLength: 0 }}
+                  animate={{ pathLength: 1 }}
+                  transition={{ duration: 0.9, ease: 'easeInOut', delay: 0.1 }}
                 />
                 {/* End dot */}
                 {(() => {
                   const lastPt = spark.pts.split(' ').pop();
                   const [cx, cy] = lastPt.split(',');
-                  return <circle cx={cx} cy={cy} r="2" fill={spark.color} />;
+                  return (
+                    <motion.circle
+                      cx={cx} cy={cy} r="2" fill={spark.color}
+                      initial={{ opacity: 0, scale: 0 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ delay: 0.85, duration: 0.2 }}
+                    />
+                  );
                 })()}
               </svg>
             )}
