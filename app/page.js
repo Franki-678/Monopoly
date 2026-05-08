@@ -605,7 +605,7 @@ function Dashboard({ player, dashboard, market, players, state, refresh, logout,
             </div>
           )}
           {section === 'admin' && pData.is_admin && (
-            <AdminSection state={state} resolveTurn={resolveTurn} loading={loading} turn={turn} />
+            <AdminSection state={state} resolveTurn={resolveTurn} loading={loading} turn={turn} player={player} />
           )}
           {section === 'ranking' && (
             <RankingSection players={players} player={player} />
@@ -796,22 +796,9 @@ function InicioSection({ dashboard, market, player, turn, refresh, auditTurn, la
 
   return (
     <div className="space-y-2">
-      {/* PnL Hero Card — Portafolio + Flujo */}
-      <div className={`border rounded-xl p-3 ${isWinning ? 'bg-gradient-to-r from-lime-950/40 to-black border-lime-600/40' : 'bg-gradient-to-r from-red-950/40 to-black border-red-600/40'}`}>
-        <div className="flex items-center justify-between mb-2.5">
-          <div>
-            <div className="text-[8px] font-mono uppercase text-zinc-500 tracking-widest mb-0.5">Net Worth</div>
-            <div className={`text-2xl font-black font-mono ${isWinning ? 'text-lime-400' : 'text-red-400'}`}>{fmt(Math.round(totalNW))}</div>
-          </div>
-          <div className="text-right">
-            <div className={`text-base font-black font-mono ${pnl >= 0 ? 'text-lime-300' : 'text-red-300'}`}>
-              {pnl >= 0 ? '+' : ''}{fmt(Math.round(pnl))}
-            </div>
-            <div className="text-[9px] font-mono text-zinc-600">vs capital inicial</div>
-          </div>
-        </div>
-
-        {/* Portafolio + Flujo/T — 2 cols only */}
+      {/* ── Panel de Control ── */}
+      <div className={`border rounded-xl p-3 ${netCashflow >= 0 ? 'bg-gradient-to-br from-zinc-950 to-black border-lime-600/25' : 'bg-gradient-to-br from-zinc-950 to-black border-red-600/25'}`}>
+        {/* Portafolio + Flujo/T — 2 cols */}
         <div className="grid grid-cols-2 gap-2 mb-2.5">
           <div className="bg-zinc-900/60 rounded-lg px-2.5 py-2">
             <div className="text-[8px] font-mono uppercase text-zinc-500 mb-0.5">Portafolio</div>
@@ -1030,6 +1017,40 @@ function InicioSection({ dashboard, market, player, turn, refresh, auditTurn, la
   );
 }
 
+// ── Sparkline Generator (deterministic from corp props) ──────────────────────
+function generateSparkline(corp) {
+  // Seed from corp name chars + score
+  const nameSum = (corp.name || '').split('').reduce((a, c, i) => a + c.charCodeAt(0) * (i + 1), 0);
+  let s = (nameSum * 31 + corp.score * 137) & 0x7fffffff;
+  const rand = () => { s = (s * 1664525 + 1013904223) & 0x7fffffff; return s / 0x7fffffff; };
+
+  const W = 72; const H = 24; const N = 9;
+  const trend = (corp.score - 2.5) * 0.04; // -0.1 to +0.1
+  let y = 0.45 + rand() * 0.1;
+  const ys = [y];
+  for (let i = 1; i < N; i++) {
+    y = Math.max(0.05, Math.min(0.95, y + trend + (rand() - 0.46) * 0.13));
+    ys.push(y);
+  }
+  const minY = Math.min(...ys); const maxY = Math.max(...ys); const range = maxY - minY || 0.1;
+  const pts = ys.map((v, i) => {
+    const px = ((i / (N - 1)) * W).toFixed(1);
+    const py = (H - ((v - minY) / range) * (H - 4) - 2).toFixed(1);
+    return `${px},${py}`;
+  }).join(' ');
+  const isUp = ys[N - 1] >= ys[0];
+  return { pts, isUp, color: isUp ? '#84cc16' : '#f87171' };
+}
+
+// ── Score color palette ───────────────────────────────────────────────────────
+function scoreStyle(score) {
+  if (score >= 5) return { accent: 'text-lime-400',  border: 'border-lime-500/35',  bar: 'bg-lime-400',   bg: 'bg-lime-500/10',   glow: 'shadow-[0_0_12px_rgba(132,204,22,0.12)]' };
+  if (score >= 4) return { accent: 'text-cyan-400',  border: 'border-cyan-500/35',  bar: 'bg-cyan-400',   bg: 'bg-cyan-500/10',   glow: 'shadow-[0_0_12px_rgba(34,211,238,0.10)]' };
+  if (score >= 3) return { accent: 'text-amber-400', border: 'border-amber-500/30', bar: 'bg-amber-400',  bg: 'bg-amber-500/10',  glow: '' };
+  if (score >= 2) return { accent: 'text-orange-400',border: 'border-orange-500/25',bar: 'bg-orange-400', bg: 'bg-orange-500/10', glow: '' };
+  return                 { accent: 'text-zinc-500',  border: 'border-zinc-800',      bar: 'bg-zinc-600',   bg: 'bg-zinc-800/40',   glow: '' };
+}
+
 // ── Mini Corp Card (for Inicio picks) ─────────────────────────────────────────
 function MiniCorpCard({ corp, player, refresh }) {
   const [loading, setLoading] = useState(null); // qty loading
@@ -1136,23 +1157,22 @@ function SmartMarketTab({ market, player, portfolio, turn, refresh, playerLevel 
 
   return (
     <div className="space-y-2">
-      {/* Market description */}
-      <div className="flex items-start gap-2 bg-zinc-900/40 border border-zinc-800 rounded-lg px-3 py-2">
-        <span className="text-base leading-none shrink-0 mt-0.5">📈</span>
-        <p className="text-[10px] text-zinc-500 leading-relaxed">
-          Comprá acciones para recibir <span className="text-lime-400">dividendos</span> cada turno. Spread del <span className="text-orange-400">3%</span> en compra y venta. Corps de nivel alto requieren IC invertido para acceder.
-        </p>
-      </div>
-
       {/* Filter pills */}
-      <div className="flex gap-1.5">
-        {[['all','Todos'],['hot','🔥 Hot'],['mine','Mis corps'],['locked','🔒 Avanzadas']].map(([id, label]) => (
+      <div className="flex gap-1.5 flex-wrap">
+        {[['all','Todos'],['hot','🔥 Hot'],['mine','Mi portafolio'],['locked','🔒 Avanzadas']].map(([id, label]) => (
           <button
             key={id}
             onClick={() => setFilter(id)}
-            className={`px-3 py-1 text-[9px] font-mono uppercase rounded-full border transition-colors ${filter === id ? 'bg-lime-400/20 border-lime-500/50 text-lime-300 font-bold' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}
+            className={`px-3 py-1.5 text-[9px] font-mono uppercase rounded-full border transition-all ${
+              filter === id
+                ? 'bg-cyan-400/20 border-cyan-500/50 text-cyan-300 font-bold'
+                : 'border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-700'
+            }`}
           >{label}</button>
         ))}
+        <div className="ml-auto flex items-center gap-1 text-[9px] font-mono text-zinc-600">
+          <span className="text-cyan-400 font-bold">{filtered.length}</span> corps
+        </div>
       </div>
 
       {/* Corp cards */}
@@ -1176,9 +1196,9 @@ function SmartMarketTab({ market, player, portfolio, turn, refresh, playerLevel 
 
 // ── Smart Corp Card ───────────────────────────────────────────────────────────
 function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh, playerLevel = 1 }) {
-  const [loading,    setLoading]    = useState(null);
-  const [customQty,  setCustomQty]  = useState('');
-  const [orderType,  setOrderType]  = useState('BUY_SHARES');
+  const [loading,   setLoading]   = useState(null);
+  const [customQty, setCustomQty] = useState('');
+  const [orderType, setOrderType] = useState('BUY_SHARES');
 
   const sharePrice    = Number(corp.fair_market_value) / 100;
   const buyPrice      = sharePrice * 1.03;
@@ -1187,6 +1207,13 @@ function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh, 
   const isCeo         = corp.ceo_player_id === player.id;
   const reqLevel      = Number(corp.required_level || 0);
   const isLevelLocked = reqLevel > 1 && playerLevel < reqLevel;
+
+  // Visual style based on score
+  const ss      = isLevelLocked ? scoreStyle(0) : scoreStyle(corp.score || 0);
+  const spark   = generateSparkline(corp);
+  const yieldPct = Number(corp.base_income) > 0
+    ? ((Number(corp.base_income) / Number(corp.fair_market_value)) * 100).toFixed(1)
+    : null;
 
   const placeOrder = async (type, qty) => {
     const q = parseInt(qty, 10);
@@ -1208,40 +1235,114 @@ function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh, 
   };
 
   return (
-    <motion.div layout className={`bg-zinc-950 border rounded-xl overflow-hidden ${isLevelLocked ? 'border-zinc-800 opacity-75' : 'border-zinc-800'}`}>
-      {/* Card header — always visible */}
-      <button onClick={onToggle} className="w-full text-left p-3 hover:bg-zinc-900/40 transition-colors">
+    <motion.div layout className={`bg-zinc-950 border rounded-xl overflow-hidden transition-shadow ${
+      isLevelLocked ? 'border-zinc-800/50 opacity-60' : myShares > 0 ? ss.border + ' ' + ss.glow : 'border-zinc-800/80'
+    }`}>
+      {/* ── Card top: name / sparkline / FMV ── */}
+      <button onClick={onToggle} className="w-full text-left px-3 pt-3 pb-0 hover:bg-zinc-900/30 transition-colors">
         <div className="flex items-start gap-2">
+          {/* Left: name + meta */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className={`font-bold text-sm leading-tight ${isLevelLocked ? 'text-zinc-500' : 'text-white'}`}>{corp.name}</span>
+              <span className={`font-black text-sm leading-snug ${isLevelLocked ? 'text-zinc-500' : 'text-white'}`}>
+                {corp.name}
+              </span>
               {isCeo && <Crown className="h-3 w-3 text-orange-400 shrink-0" />}
-              {isLevelLocked
-                ? <Badge className="bg-red-500/15 text-red-400 border-red-500/25 border text-[8px] font-mono shrink-0">🔒 Req. L{reqLevel}</Badge>
-                : <Badge className="bg-zinc-800 text-zinc-400 border-0 text-[8px] font-mono shrink-0">{corp.district}</Badge>
-              }
-              {!isLevelLocked && myShares > 0 && <Badge className="bg-lime-500/15 text-lime-400 border-lime-500/30 text-[8px] font-mono shrink-0">{myShares} sh</Badge>}
+              {myShares > 0 && !isLevelLocked && (
+                <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded-full border ${ss.bg} ${ss.accent} border-current/20`}>
+                  {myShares} sh
+                </span>
+              )}
+              {isLevelLocked && (
+                <span className="text-[8px] font-mono text-red-400 border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 rounded-full">
+                  🔒 L{reqLevel}
+                </span>
+              )}
             </div>
-            <div className="flex items-center gap-2 mt-1 flex-wrap">
-              {/* Score flames */}
-              <div className="flex gap-[1px]">
+
+            {/* District + score bars */}
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-[9px] font-mono text-zinc-600 uppercase">{corp.district}</span>
+              <div className="flex gap-[2px] items-end h-3">
                 {Array.from({ length: 5 }).map((_, i) => (
-                  <span key={i} className={`text-[11px] ${i < corp.score ? 'opacity-100' : 'opacity-15'}`}>🔥</span>
+                  <div key={i} className={`w-2 rounded-sm transition-all ${i < corp.score ? ss.bar : 'bg-zinc-800'}`}
+                       style={{ height: `${40 + i * 12}%` }} />
                 ))}
               </div>
-              <span className="text-[9px] font-mono text-zinc-500">{fmtDec(sharePrice)}/sh</span>
-              <span className={`text-[9px] font-mono ${supply > 20 ? 'text-zinc-400' : supply > 5 ? 'text-orange-400' : 'text-red-400'}`}>{supply} disp.</span>
-              <span className="text-[9px] font-mono text-zinc-500">CEO: {corp.ceo_name || '—'}</span>
             </div>
           </div>
-          <div className="shrink-0 text-right">
-            <div className="text-sm font-black font-mono text-lime-400">{fmt(corp.fair_market_value)}</div>
-            {isExpanded ? <ChevronDown className="h-3.5 w-3.5 text-zinc-500 ml-auto mt-1" /> : <ChevronRight className="h-3.5 w-3.5 text-zinc-500 ml-auto mt-1" />}
+
+          {/* Right: FMV + sparkline */}
+          <div className="shrink-0 flex flex-col items-end gap-1">
+            <span className={`text-base font-black font-mono leading-none ${isLevelLocked ? 'text-zinc-600' : ss.accent}`}>
+              {fmt(corp.fair_market_value)}
+            </span>
+            {!isLevelLocked && (
+              <svg width="72" height="24" className="overflow-visible block">
+                <polyline
+                  points={spark.pts}
+                  fill="none"
+                  stroke={spark.color}
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  opacity="0.85"
+                />
+                {/* End dot */}
+                {(() => {
+                  const lastPt = spark.pts.split(' ').pop();
+                  const [cx, cy] = lastPt.split(',');
+                  return <circle cx={cx} cy={cy} r="2" fill={spark.color} />;
+                })()}
+              </svg>
+            )}
           </div>
+        </div>
+
+        {/* ── Stats row ── */}
+        <div className="flex items-center gap-x-2.5 gap-y-0.5 flex-wrap mt-1.5 pb-2 border-b border-zinc-900/60 text-[9px] font-mono">
+          <span className="text-zinc-400 font-bold">{fmtDec(sharePrice)}/sh</span>
+          <span className={`font-bold ${supply > 20 ? 'text-zinc-500' : supply > 5 ? 'text-amber-400' : 'text-red-400'}`}>
+            {supply === 0 ? '🔴 AGOTADO' : `${supply} disp.`}
+          </span>
+          {yieldPct && (
+            <span className="text-lime-500">yield {yieldPct}%</span>
+          )}
+          <span className="text-zinc-600">{corp.ceo_name ? `CEO: ${corp.ceo_name}` : 'Sin CEO'}</span>
+          {!isExpanded && <span className="ml-auto text-zinc-700">{isExpanded ? '▲' : '▼'}</span>}
         </div>
       </button>
 
-      {/* Expanded: quick-order panel */}
+      {/* ── Quick buy row — always visible unless locked ── */}
+      {!isLevelLocked && !isExpanded && (
+        <div className="flex gap-1.5 px-3 py-2.5">
+          <span className="text-[8px] font-mono uppercase text-zinc-600 self-center shrink-0 hidden sm:block">Comprar:</span>
+          {[5, 10, 25].map(qty => (
+            <button
+              key={qty}
+              onClick={(e) => { e.stopPropagation(); placeOrder('BUY_SHARES', qty); }}
+              disabled={!!loading || supply < qty}
+              className={`flex-1 py-2 rounded-lg border text-[10px] font-mono font-bold ${ss.bg} ${ss.accent} border-current/20 disabled:opacity-30 disabled:cursor-not-allowed transition-all active:scale-95`}
+            >
+              {loading === `BUY_SHARES-${qty}`
+                ? <Loader2 className="h-2.5 w-2.5 animate-spin mx-auto" />
+                : <><span className="text-[11px]">+{qty}</span><br/><span className="opacity-50 text-[8px]">{fmt(Math.round(qty * buyPrice))}</span></>
+              }
+            </button>
+          ))}
+          {myShares > 0 && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggle(); }}
+              className="px-3 py-2 rounded-lg border border-red-500/30 text-[10px] font-mono text-red-400 bg-red-500/8 transition-colors flex flex-col items-center gap-0"
+            >
+              <span className="font-bold">Vender</span>
+              <span className="text-[8px] opacity-60">{myShares}sh</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── Expanded panel ── */}
       <AnimatePresence>
         {isExpanded && (
           <motion.div
@@ -1251,98 +1352,82 @@ function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh, 
             transition={{ duration: 0.18 }}
             className="overflow-hidden"
           >
-            <div className="px-3 pb-3 space-y-2.5 border-t border-zinc-900">
+            <div className="px-3 pb-3 space-y-2.5">
               {/* Level lock banner */}
               {isLevelLocked && (
-                <div className="pt-2.5">
-                  <div className="flex items-center gap-2 bg-red-950/30 border border-red-500/25 rounded-lg px-3 py-2">
-                    <span className="text-base leading-none">🔒</span>
-                    <div>
-                      <p className="text-[10px] font-bold text-red-400 uppercase">Nivel {reqLevel} requerido</p>
-                      <p className="text-[9px] text-red-400/70">Tu nivel: {playerLevel}. Gastá más IC en el Lab para desbloquear.</p>
+                <div className="flex items-center gap-2 bg-red-950/30 border border-red-500/25 rounded-lg px-3 py-2 mt-2">
+                  <span className="text-base">🔒</span>
+                  <div>
+                    <p className="text-[10px] font-bold text-red-400 uppercase">Nivel {reqLevel} requerido</p>
+                    <p className="text-[9px] text-red-400/70">Tu nivel: {playerLevel}. Gastá más IC en el Lab.</p>
+                  </div>
+                </div>
+              )}
+
+              {!isLevelLocked && (
+                <>
+                  {/* Quick BUY */}
+                  <div className="pt-1">
+                    <div className="text-[8px] font-mono uppercase text-zinc-500 mb-1.5 flex items-center gap-1">
+                      <TrendingUp className="h-2.5 w-2.5 text-lime-400" /> Comprar rápido · spread +3%
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {[5, 10, 25].map(qty => (
+                        <button key={qty} onClick={() => placeOrder('BUY_SHARES', qty)}
+                          disabled={!!loading || supply < qty}
+                          className="flex flex-col items-center py-2 px-1 bg-lime-400/10 hover:bg-lime-400/20 border border-lime-500/30 rounded-lg text-lime-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                          <span className="text-xs font-black">+{qty}</span>
+                          <span className="text-[8px] font-mono opacity-70">~{fmt(Math.round(qty * buyPrice))}</span>
+                        </button>
+                      ))}
                     </div>
                   </div>
-                </div>
-              )}
 
-              {/* Quick BUY */}
-              <div className="pt-2.5">
-                <div className="text-[8px] font-mono uppercase text-zinc-500 mb-1.5 flex items-center gap-1">
-                  <TrendingUp className="h-2.5 w-2.5 text-lime-400" /> Comprar rápido
-                  <span className="text-zinc-700 ml-1">· spread +3%</span>
-                </div>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {[5, 10, 25].map(qty => (
-                    <button
-                      key={qty}
-                      onClick={() => placeOrder('BUY_SHARES', qty)}
-                      disabled={!!loading || supply < qty || isLevelLocked}
-                      className="flex flex-col items-center py-2 px-1 bg-lime-400/10 hover:bg-lime-400/20 border border-lime-500/30 rounded-lg text-lime-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                    >
-                      <span className="text-xs font-black">+{qty}</span>
-                      <span className="text-[8px] font-mono opacity-70">~{fmt(Math.round(qty * buyPrice))}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
+                  {/* Quick SELL */}
+                  {myShares > 0 && (
+                    <div>
+                      <div className="text-[8px] font-mono uppercase text-zinc-500 mb-1.5 flex items-center gap-1">
+                        <TrendingDown className="h-2.5 w-2.5 text-red-400" /> Vender · spread -3%
+                      </div>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {[...new Set([Math.min(5, myShares), Math.min(10, myShares), myShares])].filter(v => v > 0).map(qty => (
+                          <button key={qty} onClick={() => placeOrder('SELL_SHARES', qty)}
+                            disabled={!!loading}
+                            className="flex flex-col items-center py-2 px-1 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-lg text-red-300 disabled:opacity-40 transition-colors">
+                            <span className="text-xs font-black">{qty === myShares && qty > 10 ? 'Todo' : `-${qty}`}</span>
+                            <span className="text-[8px] font-mono opacity-70">~{fmt(Math.round(qty * sellPrice))}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
-              {/* Quick SELL */}
-              {myShares > 0 && (
-                <div>
-                  <div className="text-[8px] font-mono uppercase text-zinc-500 mb-1.5 flex items-center gap-1">
-                    <TrendingDown className="h-2.5 w-2.5 text-red-400" /> Vender
+                  {/* Custom order */}
+                  <div className="flex gap-1.5">
+                    <select value={orderType} onChange={e => setOrderType(e.target.value)}
+                      className="bg-zinc-900 border border-zinc-800 text-white text-[9px] font-mono rounded-lg px-2 h-8 shrink-0">
+                      <option value="BUY_SHARES">Comprar</option>
+                      <option value="SELL_SHARES" disabled={myShares === 0}>
+                        Vender{myShares === 0 ? ' (sin acc.)' : ''}
+                      </option>
+                    </select>
+                    <Input type="number" min="1" max={orderType === 'SELL_SHARES' ? myShares : supply}
+                      value={customQty} onChange={e => setCustomQty(e.target.value)}
+                      placeholder="Cant." className="bg-black border-zinc-800 text-white font-mono h-8 text-xs" />
+                    <Button onClick={() => placeOrder(orderType, customQty)}
+                      disabled={!!loading || !customQty || (orderType === 'SELL_SHARES' && myShares === 0)} size="sm"
+                      className={`shrink-0 h-8 font-bold text-xs px-3 ${orderType === 'BUY_SHARES' ? 'bg-lime-400 hover:bg-lime-300 text-black' : 'bg-red-700 hover:bg-red-600 text-white'}`}>
+                      {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : 'OK'}
+                    </Button>
                   </div>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {[...new Set([Math.min(5, myShares), Math.min(10, myShares), myShares])].filter(v => v > 0).map(qty => (
-                      <button
-                        key={qty}
-                        onClick={() => placeOrder('SELL_SHARES', qty)}
-                        disabled={!!loading}
-                        className="flex flex-col items-center py-2 px-1 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-lg text-red-300 disabled:opacity-40 transition-colors"
-                      >
-                        <span className="text-xs font-black">{qty === myShares && qty > 10 ? 'Todo' : `-${qty}`}</span>
-                        <span className="text-[8px] font-mono opacity-70">~{fmt(Math.round(qty * sellPrice))}</span>
-                      </button>
-                    ))}
+
+                  {/* Meta info */}
+                  <div className="flex items-center justify-between text-[8px] font-mono text-zinc-700">
+                    <span>Banda: {fmt(Math.round(Number(corp.fair_market_value) * 0.5))} – {fmt(Math.round(Number(corp.fair_market_value) * 2.5))}</span>
+                    <span>FMV base · spread ±3%</span>
                   </div>
-                </div>
+                </>
               )}
-
-              {/* Custom order */}
-              <div className="flex gap-1.5">
-                <select
-                  value={orderType}
-                  onChange={e => setOrderType(e.target.value)}
-                  className="bg-zinc-900 border border-zinc-800 text-white text-[9px] font-mono rounded-lg px-2 h-8 shrink-0"
-                >
-                  <option value="BUY_SHARES">Comprar</option>
-                  <option value="SELL_SHARES" disabled={myShares === 0}>
-                    Vender{myShares === 0 ? ' (sin acc.)' : ''}
-                  </option>
-                </select>
-                <Input
-                  type="number"
-                  min="1"
-                  max={orderType === 'SELL_SHARES' ? myShares : supply}
-                  value={customQty}
-                  onChange={e => setCustomQty(e.target.value)}
-                  placeholder="Cant."
-                  className="bg-black border-zinc-800 text-white font-mono h-8 text-xs"
-                />
-                <Button
-                  onClick={() => placeOrder(orderType, customQty)}
-                  disabled={!!loading || !customQty || isLevelLocked || (orderType === 'SELL_SHARES' && myShares === 0)}
-                  size="sm"
-                  className={`shrink-0 h-8 font-bold text-xs px-3 ${orderType === 'BUY_SHARES' ? 'bg-lime-400 hover:bg-lime-300 text-black' : 'bg-red-700 hover:bg-red-600 text-white'}`}
-                >
-                  {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : 'OK'}
-                </Button>
-              </div>
-
-              {/* Banda de precio info */}
-              <p className="text-[8px] font-mono text-zinc-600">
-                Banda: {fmt(Number(corp.fair_market_value) * 0.5)} – {fmt(Number(corp.fair_market_value) * 2.5)} · Sell spread -3%
-              </p>
             </div>
           </motion.div>
         )}
@@ -1907,9 +1992,24 @@ function RankingSection({ players, player }) {
 }
 
 // ── Admin Section ─────────────────────────────────────────────────────────────
-function AdminSection({ state, resolveTurn, loading, turn }) {
-  const [logs, setLogs] = useState([]);
+function AdminSection({ state, resolveTurn, loading, turn, player }) {
+  const [logs,         setLogs]         = useState([]);
+  const [tgLoading,    setTgLoading]    = useState(false);
+  const [tgResult,     setTgResult]     = useState(null);
   useEffect(() => { api('admin/turn-log').then(d => setLogs(d.logs)).catch(() => {}); }, [state.current_turn]);
+
+  const forceTelegram = async () => {
+    if (!confirm('¿Forzar envío del reporte del último turno por Telegram?')) return;
+    setTgLoading(true); setTgResult(null);
+    try {
+      const res = await api('admin/force-telegram', { method: 'POST', body: JSON.stringify({ admin_id: player.id }) });
+      setTgResult({ ok: true, msg: `✅ Enviado — T${res.turn}` });
+      toast.success(`📡 Reporte del Turno ${res.turn} enviado a Telegram`);
+    } catch (e) {
+      setTgResult({ ok: false, msg: '❌ ' + e.message });
+      toast.error(e.message);
+    } finally { setTgLoading(false); }
+  };
 
   return (
     <div className="space-y-2">
@@ -1919,7 +2019,7 @@ function AdminSection({ state, resolveTurn, loading, turn }) {
             <Flame className="h-3.5 w-3.5" /> Control de Turnos
           </CardTitle>
         </CardHeader>
-        <CardContent className="px-3 pb-3">
+        <CardContent className="px-3 pb-3 space-y-3">
           <div className="flex items-center gap-4 flex-wrap">
             <div>
               <div className="text-[10px] font-mono uppercase text-zinc-500">Turno actual</div>
@@ -1929,6 +2029,21 @@ function AdminSection({ state, resolveTurn, loading, turn }) {
               {loading ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <Flame className="h-4 w-4 mr-1.5" />}
               Resolver T{state.current_turn}
             </Button>
+          </div>
+          {/* Telegram Force */}
+          <div className="border-t border-orange-500/20 pt-3 flex items-center gap-3 flex-wrap">
+            <Button
+              onClick={forceTelegram}
+              disabled={tgLoading}
+              className="bg-sky-700 hover:bg-sky-600 text-white font-bold uppercase tracking-wider text-xs h-9 px-4"
+            >
+              {tgLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : '📡'}
+              {tgLoading ? 'Enviando...' : 'Forzar Telegram'}
+            </Button>
+            <div className="text-[9px] font-mono text-zinc-500 flex-1">Reenvía el resumen del último turno resuelto al grupo.</div>
+            {tgResult && (
+              <span className={`text-[10px] font-mono font-bold ${tgResult.ok ? 'text-sky-400' : 'text-red-400'}`}>{tgResult.msg}</span>
+            )}
           </div>
         </CardContent>
       </Card>

@@ -490,6 +490,76 @@ async function route(request, method, path) {
     return json({ logs });
   }
 
+  // --- FORCE TELEGRAM (admin manual resend) ---
+  if (p === 'admin/force-telegram' && method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const { admin_id } = body;
+    const [adm] = await sql`SELECT is_admin FROM players WHERE id = ${admin_id}`;
+    if (!adm?.is_admin) return err('Solo admin puede disparar Telegram', 403);
+
+    const [lastLog] = await sql`SELECT turn_number, resolved_at, summary FROM turn_log ORDER BY turn_number DESC LIMIT 1`;
+    if (!lastLog) return err('No hay turnos resueltos aún');
+
+    const tok = process.env.TELEGRAM_BOT_TOKEN;
+    const cid = process.env.TELEGRAM_CHAT_ID;
+    if (!tok || !cid) return err('Variables TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID no configuradas en Vercel');
+
+    const tn = lastLog.turn_number;
+    const s  = lastLog.summary || {};
+    const lines = [
+      `📡 *REENVÍO MANUAL — Turno #${tn}*`,
+      `━━━━━━━━━━━━━━━━━━━`,
+    ];
+
+    if ((s.trades || []).length > 0) lines.push(`📈 Trades ejecutados: ${s.trades.length}`);
+    if (s.globalEvent) {
+      lines.push(`\n🌐 *Evento global:* ${s.globalEvent.label}`);
+      if (s.globalEvent.desc) lines.push(`  ↳ ${s.globalEvent.desc}`);
+    }
+
+    // FMV top movers
+    const fmvEntries = Object.entries(s.fmv_changes || {});
+    const movers = fmvEntries
+      .map(([name, ch]) => ({ name, pct: ch?.from > 0 ? ((ch.to - ch.from) / ch.from * 100) : 0 }))
+      .filter(m => Math.abs(m.pct) >= 0.5)
+      .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct))
+      .slice(0, 5);
+    if (movers.length > 0) {
+      lines.push(`\n📊 *Top movers FMV:*`);
+      for (const m of movers)
+        lines.push(`  ${m.pct >= 0 ? '▲' : '▼'} ${m.name}: ${m.pct > 0 ? '+' : ''}${m.pct.toFixed(1)}%`);
+    }
+
+    // Live standings
+    const standings = await sql`
+      SELECT p.username,
+        p.liquid_cash + COALESCE((
+          SELECT SUM(sh.shares::float / 100 * c2.fair_market_value)
+          FROM shareholdings sh
+          JOIN corporations c2 ON c2.id = sh.corporation_id
+          WHERE sh.player_id = p.id AND sh.shares > 0
+        ), 0) AS nw
+      FROM players p ORDER BY nw DESC`;
+    if (standings.length > 0) {
+      lines.push(`\n🏆 *Standings actuales:*`);
+      const medals = ['🥇','🥈','🥉'];
+      standings.forEach((pl, i) => {
+        lines.push(`  ${medals[i] || `${i + 1}.`} *${pl.username}* — $${Math.round(Number(pl.nw)).toLocaleString('es-AR')}`);
+      });
+    }
+
+    lines.push(`\n_Reenviado manualmente ${new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })} ART_`);
+    lines.push(`👉 distrito77.vercel.app`);
+
+    await fetch(`https://api.telegram.org/bot${tok}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: cid, text: lines.join('\n'), parse_mode: 'Markdown' }),
+    });
+
+    return json({ ok: true, message: `Enviado al chat ${cid}`, turn: tn });
+  }
+
   // --- CONFIG (for UI display) ---
   if (p === 'config' && method === 'GET') {
     return json({ config: CONFIG });
