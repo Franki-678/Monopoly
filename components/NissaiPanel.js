@@ -82,7 +82,7 @@ export default function NissaiPanel({ player, players, market, onChange }) {
 
   const cancel = async (orderId) => {
     try {
-      await api('nissai/' + orderId, { method: 'DELETE' });
+      await api('nissai/' + orderId, { method: 'DELETE', body: JSON.stringify({ player_id: player.id }) });
       toast.success('Orden cancelada · Recursos devueltos');
       await load();
       onChange?.();

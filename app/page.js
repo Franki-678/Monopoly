@@ -788,35 +788,71 @@ function InicioSection({ dashboard, market, player, turn, refresh, auditTurn, la
 
   const activeGossip = gossipSections.find(s => s.id === gossipSection);
 
+  // IC generation estimate (base per turn + role bonus)
+  const baseIcPerTurn = Math.round(30 + 2 * turn);
+  const roleIcMult = pData.player_role === 'DATA_SCIENTIST' ? 1.5 : pData.player_role === 'ECONOMIST' ? 1.2 : 1.0;
+  const estimatedIcThisTurn = Math.round(baseIcPerTurn * roleIcMult);
+  const estimatedIcNextTurn = Math.round((30 + 2 * (turn + 1)) * roleIcMult);
+
   return (
     <div className="space-y-2">
-      {/* PnL Hero Card */}
+      {/* PnL Hero Card — Portafolio + Flujo */}
       <div className={`border rounded-xl p-3 ${isWinning ? 'bg-gradient-to-r from-lime-950/40 to-black border-lime-600/40' : 'bg-gradient-to-r from-red-950/40 to-black border-red-600/40'}`}>
-        <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center justify-between mb-2.5">
           <div>
-            <div className="text-[8px] font-mono uppercase text-zinc-500 tracking-widest mb-0.5">Net Worth total</div>
+            <div className="text-[8px] font-mono uppercase text-zinc-500 tracking-widest mb-0.5">Net Worth</div>
             <div className={`text-2xl font-black font-mono ${isWinning ? 'text-lime-400' : 'text-red-400'}`}>{fmt(Math.round(totalNW))}</div>
           </div>
           <div className="text-right">
-            <div className={`text-lg font-black font-mono ${isWinning ? 'text-lime-300' : 'text-red-300'}`}>
+            <div className={`text-base font-black font-mono ${pnl >= 0 ? 'text-lime-300' : 'text-red-300'}`}>
               {pnl >= 0 ? '+' : ''}{fmt(Math.round(pnl))}
             </div>
             <div className="text-[9px] font-mono text-zinc-600">vs capital inicial</div>
           </div>
         </div>
-        <div className="grid grid-cols-3 gap-2 text-[9px] font-mono">
-          <div className="bg-zinc-900/60 rounded px-2 py-1 text-center">
-            <div className="text-zinc-500 mb-0.5">Cash</div>
-            <div className="text-cyan-400 font-bold">{fmt(Math.round(cashValue))}</div>
+
+        {/* Portafolio + Flujo/T — 2 cols only */}
+        <div className="grid grid-cols-2 gap-2 mb-2.5">
+          <div className="bg-zinc-900/60 rounded-lg px-2.5 py-2">
+            <div className="text-[8px] font-mono uppercase text-zinc-500 mb-0.5">Portafolio</div>
+            <div className="text-sm font-black font-mono text-lime-400">{fmt(Math.round(portfolioValue))}</div>
           </div>
-          <div className="bg-zinc-900/60 rounded px-2 py-1 text-center">
-            <div className="text-zinc-500 mb-0.5">Portfolio</div>
-            <div className="text-lime-400 font-bold">{fmt(Math.round(portfolioValue))}</div>
+          <div className={`rounded-lg px-2.5 py-2 ${netCashflow >= 0 ? 'bg-lime-900/25' : 'bg-red-900/25'}`}>
+            <div className="text-[8px] font-mono uppercase text-zinc-500 mb-0.5">Flujo/T</div>
+            <div className={`text-sm font-black font-mono ${netCashflow >= 0 ? 'text-lime-400' : 'text-red-400'}`}>{netCashflow >= 0 ? '+' : ''}{fmt(Math.round(netCashflow))}</div>
           </div>
-          <div className={`rounded px-2 py-1 text-center ${netCashflow >= 0 ? 'bg-lime-900/20' : 'bg-red-900/20'}`}>
-            <div className="text-zinc-500 mb-0.5">Flujo/T</div>
-            <div className={`font-bold ${netCashflow >= 0 ? 'text-lime-400' : 'text-red-400'}`}>{netCashflow >= 0 ? '+' : ''}{fmt(Math.round(netCashflow))}</div>
+        </div>
+
+        {/* Visual income vs expense breakdown */}
+        {corpBreakdown.length > 0 && (
+          <div className="bg-zinc-900/50 rounded-lg px-2.5 py-2 space-y-1.5">
+            <div className="flex items-center justify-between text-[9px] font-mono">
+              <span className="text-lime-400 font-bold flex items-center gap-1"><TrendingUp className="h-3 w-3" /> ENTRA: +{fmt(Math.round(totalDiv))}</span>
+              <span className="text-red-400 font-bold flex items-center gap-1"><TrendingDown className="h-3 w-3" /> SALE: -{fmt(Math.round(totalMaint))}</span>
+            </div>
+            {/* Progress bar visual */}
+            {(totalDiv + totalMaint) > 0 && (
+              <div className="w-full h-2.5 bg-red-900/40 rounded-full overflow-hidden flex">
+                <div
+                  className="h-full bg-lime-500 rounded-full transition-all"
+                  style={{ width: `${Math.min(100, (totalDiv / (totalDiv + totalMaint)) * 100)}%` }}
+                />
+              </div>
+            )}
           </div>
+        )}
+
+        {/* IC Projection row */}
+        <div className="mt-2 flex items-center gap-2 bg-orange-900/20 border border-orange-500/20 rounded-lg px-2.5 py-1.5">
+          <Zap className="h-3.5 w-3.5 text-orange-400 shrink-0" />
+          <div className="flex-1 min-w-0 text-[9px] font-mono">
+            <span className="text-zinc-500 uppercase">IC este turno:</span>
+            <span className="text-orange-300 font-bold ml-1">+{estimatedIcThisTurn}</span>
+            <span className="text-zinc-600 mx-1">·</span>
+            <span className="text-zinc-500 uppercase">próximo:</span>
+            <span className="text-orange-400/70 font-bold ml-1">~{estimatedIcNextTurn}</span>
+          </div>
+          <span className="text-[8px] font-mono text-zinc-600 shrink-0 uppercase">{pData.player_role === 'DATA_SCIENTIST' ? '+50% DS' : pData.player_role === 'ECONOMIST' ? '+20% EC' : 'base'}</span>
         </div>
       </div>
 
@@ -825,21 +861,22 @@ function InicioSection({ dashboard, market, player, turn, refresh, auditTurn, la
         <Card className="bg-zinc-950 border-zinc-900">
           <CardHeader className="py-2 px-3">
             <CardTitle className="text-lime-400 font-mono uppercase text-xs flex items-center gap-1.5">
-              <Building2 className="h-3.5 w-3.5" /> Portfolio — {corpBreakdown.length} corps
+              <Building2 className="h-3.5 w-3.5" /> Portfolio — {corpBreakdown.length} corp{corpBreakdown.length !== 1 ? 's' : ''}
             </CardTitle>
           </CardHeader>
           <CardContent className="px-3 pb-3 space-y-1.5">
             {corpBreakdown.map(h => (
               <div key={h.corp_id} className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 border ${h.net >= 0 ? 'border-zinc-800 bg-zinc-900/40' : 'border-red-900/30 bg-red-950/10'}`}>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-bold text-white truncate">{h.corpName}</span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {/* Full corp name — no truncate */}
+                    <span className="text-xs font-bold text-white leading-tight">{h.corpName}</span>
                     {h.isCeo && <Crown className="h-3 w-3 text-orange-400 shrink-0" />}
                     <span className="text-[9px] font-mono text-zinc-600">{h.shares}sh</span>
                   </div>
                   <div className="flex items-center gap-2 mt-0.5 text-[9px] font-mono">
-                    <span className="text-lime-600">▲{fmt(Math.round(h.div))}</span>
-                    <span className="text-red-600">▼{fmt(Math.round(h.maint))}</span>
+                    <span className="text-lime-500">▲{fmt(Math.round(h.div))}</span>
+                    <span className="text-red-500">▼{fmt(Math.round(h.maint))}</span>
                   </div>
                 </div>
                 <div className="text-right shrink-0">
@@ -1083,7 +1120,12 @@ function SmartMarketTab({ market, player, portfolio, turn, refresh, playerLevel 
 
   const scored = market
     .map(c => ({ ...c, score: corpScore(c, turn) }))
-    .sort((a, b) => b.score - a.score || Number(b.fair_market_value) - Number(a.fair_market_value));
+    .sort((a, b) => {
+      const aLocked = Number(a.required_level || 0) > 1 && playerLevel < Number(a.required_level || 0);
+      const bLocked = Number(b.required_level || 0) > 1 && playerLevel < Number(b.required_level || 0);
+      if (aLocked !== bLocked) return aLocked ? 1 : -1;
+      return b.score - a.score || Number(b.fair_market_value) - Number(a.fair_market_value);
+    });
 
   const filtered = scored.filter(c => {
     if (filter === 'hot')    return c.score >= 4;
@@ -1172,7 +1214,7 @@ function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh, 
         <div className="flex items-start gap-2">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className={`font-bold text-sm ${isLevelLocked ? 'text-zinc-500' : 'text-white'}`}>{corp.name}</span>
+              <span className={`font-bold text-sm leading-tight ${isLevelLocked ? 'text-zinc-500' : 'text-white'}`}>{corp.name}</span>
               {isCeo && <Crown className="h-3 w-3 text-orange-400 shrink-0" />}
               {isLevelLocked
                 ? <Badge className="bg-red-500/15 text-red-400 border-red-500/25 border text-[8px] font-mono shrink-0">🔒 Req. L{reqLevel}</Badge>
@@ -1312,12 +1354,13 @@ function SmartCorpCard({ corp, player, myShares, isExpanded, onToggle, refresh, 
 // ── Portfolio Section ─────────────────────────────────────────────────────────
 function PortfolioSection({ portfolio, market, player, turn, refresh }) {
   const [loading, setLoading] = useState(null);
+  const [buyingFor, setBuyingFor] = useState(null); // corpId for inline buy
 
   const incMult  = 1 + 0.01 * Math.pow(Math.max(1, turn), 1.15);
   const costMult = Math.pow(1.02, Math.max(0, turn - 1));
 
   const sellQuick = async (corpId, qty) => {
-    setLoading(`${corpId}-${qty}`);
+    setLoading(`sell-${corpId}-${qty}`);
     try {
       await api('orders', {
         method: 'POST',
@@ -1325,6 +1368,21 @@ function PortfolioSection({ portfolio, market, player, turn, refresh }) {
       });
       const name = portfolio.find(p => p.corp_id === corpId)?.name || '';
       toast.success(`-${qty} ${name} encolado`);
+      refresh();
+    } catch (e) { toast.error(e.message); }
+    finally { setLoading(null); }
+  };
+
+  const buyQuick = async (corpId, qty) => {
+    setLoading(`buy-${corpId}-${qty}`);
+    try {
+      await api('orders', {
+        method: 'POST',
+        body: JSON.stringify({ player_id: player.id, order_type: 'BUY_SHARES', corporation_id: corpId, shares: qty }),
+      });
+      const name = portfolio.find(p => p.corp_id === corpId)?.name || '';
+      toast.success(`+${qty} ${name} encolado`);
+      setBuyingFor(null);
       refresh();
     } catch (e) { toast.error(e.message); }
     finally { setLoading(null); }
@@ -1358,7 +1416,7 @@ function PortfolioSection({ portfolio, market, player, turn, refresh }) {
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="font-bold text-sm text-white">{s.name}</span>
+                  <span className="font-bold text-sm text-white leading-tight">{s.name}</span>
                   {isCeo && <Badge className="bg-orange-500/20 text-orange-300 border-orange-500/30 text-[8px]"><Crown className="h-2 w-2 mr-0.5" />CEO</Badge>}
                   <span className="text-[9px] font-mono text-zinc-500">{corp?.district}</span>
                 </div>
@@ -1375,19 +1433,39 @@ function PortfolioSection({ portfolio, market, player, turn, refresh }) {
               </div>
             </div>
 
-            {/* Quick sell buttons */}
-            <div className="flex items-center gap-1.5">
+            {/* Action buttons row */}
+            <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-[8px] font-mono text-zinc-600 uppercase shrink-0">Vender:</span>
               {[...new Set([Math.min(5, s.shares), Math.min(10, s.shares), s.shares])].filter(v => v > 0).map(qty => (
                 <button
                   key={qty}
                   onClick={() => sellQuick(s.corp_id, qty)}
-                  disabled={loading === `${s.corp_id}-${qty}`}
+                  disabled={!!loading}
                   className="px-2 py-0.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded text-[9px] font-mono text-red-300 disabled:opacity-40 transition-colors"
                 >
-                  {loading === `${s.corp_id}-${qty}` ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : qty === s.shares && qty > 10 ? 'Todo' : `-${qty}`}
+                  {loading === `sell-${s.corp_id}-${qty}` ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : qty === s.shares && qty > 10 ? 'Todo' : `-${qty}`}
                 </button>
               ))}
+              <span className="text-zinc-700 text-[9px]">·</span>
+              {/* Buy More */}
+              {buyingFor !== s.corp_id ? (
+                <button
+                  onClick={() => setBuyingFor(s.corp_id)}
+                  className="px-2 py-0.5 bg-lime-500/10 hover:bg-lime-500/20 border border-lime-500/30 rounded text-[9px] font-mono text-lime-300 transition-colors"
+                >
+                  + Comprar más
+                </button>
+              ) : (
+                <div className="flex items-center gap-1 mt-0.5">
+                  {[5, 10, 25].map(qty => (
+                    <button key={qty} onClick={() => buyQuick(s.corp_id, qty)} disabled={!!loading}
+                      className="px-2 py-0.5 bg-lime-500/10 hover:bg-lime-500/20 border border-lime-500/30 rounded text-[9px] font-mono text-lime-300 disabled:opacity-40 transition-colors">
+                      {loading === `buy-${s.corp_id}-${qty}` ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : `+${qty}`}
+                    </button>
+                  ))}
+                  <button onClick={() => setBuyingFor(null)} className="text-zinc-600 hover:text-zinc-400 text-[9px] font-mono px-1">✕</button>
+                </div>
+              )}
             </div>
           </div>
         );
@@ -1557,13 +1635,179 @@ function OracleTab({ player, market, ic, marketOpen, onChange }) {
   );
 }
 
-// ── Arena Section (Nissai / Casino / Bounty / Oráculo) ────────────────────────
+// ── Lobby Político Tab ────────────────────────────────────────────────────────
+const LOBBY_TYPES = [
+  { id: 'LOBBY_BULL',      name: 'Pump Mediático',    emoji: '📣', desc: 'Elegí una corp → sube +8% FMV al cierre del turno. Visible para todos.', ic_cost: 200, target: 'CORP'  },
+  { id: 'LOBBY_BEAR',      name: 'Short Institucional',emoji: '🐻', desc: 'Cualquier corp baja -8% FMV al cierre del turno. Visible para todos.',   ic_cost: 300, target: 'CORP'  },
+  { id: 'LOBBY_TAX_BREAK', name: 'Exención Fiscal',   emoji: '🏛️', desc: '+2 turnos de exención impositiva. Se revela en el gossip.', ic_cost: 350, target: 'SELF' },
+];
+
+function LobbyTab({ player, market, ic, marketOpen, onChange }) {
+  const [data,       setData]       = useState(null);
+  const [loading,    setLoading]    = useState(true);
+  const [selected,   setSelected]   = useState(null);
+  const [corpId,     setCorpId]     = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const load = async () => {
+    try {
+      const d = await api('lobby?player_id=' + player.id);
+      setData(d);
+    } catch (e) { toast.error(e.message); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const selectedDef = LOBBY_TYPES.find(l => l.id === selected);
+  const canAfford = selectedDef ? ic >= selectedDef.ic_cost : false;
+  const needsCorp = selectedDef?.target === 'CORP';
+  const ready = selected && canAfford && (!needsCorp || !!corpId);
+
+  const submit = async () => {
+    if (!ready) return;
+    setSubmitting(true);
+    try {
+      const res = await api('lobby', {
+        method: 'POST',
+        body: JSON.stringify({ player_id: player.id, lobby_type: selected, corp_id: needsCorp ? corpId : null }),
+      });
+      toast.success(res.message || '🏛️ Lobby encolado');
+      setSelected(null); setCorpId('');
+      await load(); onChange?.();
+    } catch (e) { toast.error(e.message); } finally { setSubmitting(false); }
+  };
+
+  const cancel = async (lobbyId) => {
+    try {
+      const res = await api('lobby/' + lobbyId, { method: 'DELETE', body: JSON.stringify({ player_id: player.id }) });
+      toast.success(`Cancelado · ${res.refunded_ic} IC reembolsado (50%)`);
+      await load(); onChange?.();
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const allLobbies = data?.allLobbies || [];
+  const myLobbies  = data?.myLobbies  || [];
+
+  return (
+    <div className="space-y-3">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-teal-950/60 to-black border border-teal-700/40 rounded-xl p-3 flex items-start gap-3">
+        <span className="text-3xl shrink-0">🏛️</span>
+        <div className="flex-1 min-w-0">
+          <div className="font-black text-teal-300 uppercase tracking-widest text-sm">Lobby Político</div>
+          <div className="text-[10px] font-mono text-teal-500 mt-0.5">Gastá IC para mover el mercado o esquivar impuestos · Todo es público · Se ejecuta a medianoche</div>
+        </div>
+        <div className="text-[9px] font-mono text-zinc-500 shrink-0 text-right">{Math.round(ic).toLocaleString('es-AR')} IC</div>
+      </div>
+
+      {/* Type selector */}
+      <div className="grid sm:grid-cols-3 gap-2">
+        {LOBBY_TYPES.map(t => {
+          const afford = ic >= t.ic_cost;
+          const isActive = selected === t.id;
+          const alreadyQueued = myLobbies.some(l => l.lobby_type === t.id);
+          return (
+            <motion.button key={t.id}
+              onClick={() => { if (!afford || alreadyQueued) return; setSelected(isActive ? null : t.id); setCorpId(''); }}
+              whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} style={{ willChange: 'transform' }}
+              className={`text-left p-3 rounded-lg border transition-all ${
+                alreadyQueued ? 'border-teal-500/60 bg-teal-500/10 cursor-default'
+                : isActive ? 'border-teal-500/50 bg-teal-500/10 shadow-[0_0_12px_rgba(20,184,166,0.15)]'
+                : afford ? 'border-zinc-800 bg-zinc-900/40 hover:border-zinc-700'
+                : 'border-zinc-900 bg-zinc-950/50 opacity-50 cursor-not-allowed'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-lg">{t.emoji}</span>
+                {alreadyQueued && <span className="text-[8px] font-mono text-teal-400 uppercase">✓ Encolado</span>}
+                {isActive && !alreadyQueued && <div className="w-2 h-2 rounded-full bg-teal-400 animate-pulse" />}
+              </div>
+              <div className="text-xs font-bold text-teal-300 mb-1">{t.name}</div>
+              <div className="text-[9px] text-zinc-500 mb-1.5 leading-snug">{t.desc}</div>
+              <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border ${afford ? 'border-orange-500/40 text-orange-300 bg-orange-500/10' : 'border-red-900 text-red-500'}`}>
+                {t.ic_cost} IC
+              </span>
+            </motion.button>
+          );
+        })}
+      </div>
+
+      {/* Config panel */}
+      <AnimatePresence>
+        {selected && selectedDef && marketOpen && (
+          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.18 }}>
+            <Card className="border border-teal-700/40 bg-zinc-950">
+              <CardContent className="px-3 py-3 space-y-2.5">
+                {needsCorp && (
+                  <div>
+                    <Label className="text-zinc-400 font-mono text-[9px] uppercase">Corporación objetivo</Label>
+                    <select value={corpId} onChange={e => setCorpId(e.target.value)}
+                      className="w-full bg-black border border-zinc-800 text-white text-xs font-mono rounded-lg px-2 h-8 mt-0.5">
+                      <option value="">Seleccioná corp...</option>
+                      {market.map(c => (
+                        <option key={c.id} value={c.id}>{c.name} — {fmt(Number(c.fair_market_value))}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <Button onClick={submit} disabled={submitting || !ready}
+                  className="w-full bg-teal-700 hover:bg-teal-600 text-white font-bold uppercase tracking-wider text-xs h-9">
+                  {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <>{selectedDef.emoji} Encolar Lobby ({selectedDef.ic_cost} IC)</>}
+                </Button>
+                <p className="text-[9px] font-mono text-zinc-600 text-center">IC disponible: {Math.round(ic).toLocaleString('es-AR')} · Refund 50% si cancelás</p>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+        {selected && !marketOpen && (
+          <div className="bg-zinc-900/50 border border-zinc-700/40 rounded-xl p-3 text-center text-zinc-500 text-xs font-mono">🌙 Lobby cerrado — abre a las 09:00 ART</div>
+        )}
+      </AnimatePresence>
+
+      {/* Pending lobbies this turn — all players */}
+      {allLobbies.length > 0 && (
+        <Card className="bg-zinc-950 border-zinc-900">
+          <CardHeader className="py-1.5 px-3">
+            <CardTitle className="text-teal-400 font-mono uppercase text-xs">📡 Lobbies activos este turno</CardTitle>
+            <CardDescription className="text-zinc-600 text-[10px]">Todo es público — usalo a tu favor</CardDescription>
+          </CardHeader>
+          <CardContent className="px-3 pb-3 space-y-1.5">
+            {allLobbies.map(l => {
+              const def = LOBBY_TYPES.find(t => t.id === l.lobby_type);
+              const isMine = l.player_name === player.username;
+              const myLobbyData = myLobbies.find(ml => ml.id === l.id);
+              return (
+                <div key={l.id} className="flex items-center gap-2 p-2 rounded-lg border border-zinc-800 bg-zinc-900/40">
+                  <span className="text-base shrink-0">{def?.emoji || '🏛️'}</span>
+                  <div className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-black text-black shrink-0" style={{ backgroundColor: l.avatar_color || '#a3e635' }}>{(l.player_name || '?')[0]}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-bold text-white">{l.player_name} · <span className="text-teal-300">{def?.name}</span></div>
+                    {l.corp_name && <div className="text-[9px] font-mono text-zinc-500">→ {l.corp_name}</div>}
+                  </div>
+                  <span className="text-[9px] font-mono text-orange-400">{l.ic_paid} IC</span>
+                  {isMine && myLobbyData && (
+                    <button onClick={() => cancel(l.id)} className="text-zinc-600 hover:text-red-400 text-[9px] font-mono transition-colors" title="Cancelar (50% refund)">✕</button>
+                  )}
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      )}
+      {loading && <div className="text-zinc-600 text-xs text-center py-4">Cargando...</div>}
+    </div>
+  );
+}
+
+// ── Arena Section (Nissai / Casino / Bounty / Oráculo / Lobby) ────────────────
 function ArenaSection({ tab, setTab, player, players, market, pData, refresh, marketOpen }) {
   const TABS = [
-    { id: 'nissai', label: '🥷 Nissai', activeClass: 'bg-red-700/30 text-red-300 border-red-700/40' },
-    { id: 'casino', label: '🎰 Casino', activeClass: 'bg-purple-700/30 text-purple-300 border-purple-700/40' },
+    { id: 'nissai', label: '🥷 Nissai',  activeClass: 'bg-red-700/30 text-red-300 border-red-700/40' },
+    { id: 'casino', label: '🎰 Casino',  activeClass: 'bg-purple-700/30 text-purple-300 border-purple-700/40' },
     { id: 'bounty', label: '🏴‍☠️ Bounty', activeClass: 'bg-amber-700/30 text-amber-300 border-amber-700/40' },
-    { id: 'oraculo', label: '🔮 Oráculo', activeClass: 'bg-indigo-700/30 text-indigo-300 border-indigo-700/40' },
+    { id: 'oraculo',label: '🔮 Oráculo', activeClass: 'bg-indigo-700/30 text-indigo-300 border-indigo-700/40' },
+    { id: 'lobby',  label: '🏛️ Lobby',   activeClass: 'bg-teal-700/30 text-teal-300 border-teal-700/40' },
   ];
   const active = TABS.find(t => t.id === tab);
 
@@ -1613,6 +1857,15 @@ function ArenaSection({ tab, setTab, player, players, market, pData, refresh, ma
       )}
       {tab === 'oraculo' && (
         <OracleTab
+          player={player}
+          market={market}
+          ic={Number(pData.intellectual_capital)}
+          marketOpen={marketOpen}
+          onChange={refresh}
+        />
+      )}
+      {tab === 'lobby' && (
+        <LobbyTab
           player={player}
           market={market}
           ic={Number(pData.intellectual_capital)}

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import sql from '@/lib/db';
 import { createSchema, seedIfEmpty } from '@/lib/schema';
-import { resolveTurn, getCurrentTurn, computeNetWorth, CONFIG, checkAndAwardAchievement, NISSAI_CATALOG, isMarketOpen } from '@/lib/gameLogic';
+import { resolveTurn, getCurrentTurn, computeNetWorth, CONFIG, checkAndAwardAchievement, NISSAI_CATALOG, LOBBY_CATALOG, isMarketOpen } from '@/lib/gameLogic';
 
 const json = (data, status = 200) => NextResponse.json(data, { status });
 const err = (message, status = 400) => NextResponse.json({ error: message }, { status });
@@ -19,7 +19,7 @@ async function route(request, method, path) {
   if (p === 'reset' && method === 'POST') {
     const body = await request.json().catch(() => ({}));
     if (body.secret !== process.env.ADMIN_SECRET) return err('Secret inválido', 403);
-    await sql`DROP TABLE IF EXISTS tech_orders, ic_predictions, tech_unlocks, tech_nodes, alliances, daily_rolls, turn_log, transactions, orders, shareholdings, corporations, bounty_contracts, casino_bets, nissai_orders, global_achievements, game_state, players CASCADE`;
+    await sql`DROP TABLE IF EXISTS ic_lobbies, tech_orders, ic_predictions, tech_unlocks, tech_nodes, alliances, daily_rolls, turn_log, transactions, orders, shareholdings, corporations, bounty_contracts, casino_bets, nissai_orders, global_achievements, game_state, players CASCADE`;
     await createSchema();
     const seed = await seedIfEmpty();
     return json({ ok: true, reset: true, seed });
@@ -167,6 +167,14 @@ async function route(request, method, path) {
       }
     }
 
+    // Backend sell validation: can't sell more than owned
+    if (order_type === 'SELL_SHARES') {
+      const [holding] = await sql`SELECT COALESCE(shares,0) AS shares FROM shareholdings WHERE player_id = ${player_id} AND corporation_id = ${corporation_id}`;
+      const owned = Number(holding?.shares || 0);
+      if (qty > owned) return err(`No podés vender ${qty} acciones — solo tenés ${owned}`);
+      if (owned === 0) return err('No tenés acciones de esta corporación');
+    }
+
     const [order] = await sql`
       INSERT INTO orders (player_id, turn_number, order_type, corporation_id, shares, limit_price)
       VALUES (${player_id}, ${turn}, ${order_type}, ${corporation_id}, ${qty}, ${limit_price || null})
@@ -196,6 +204,21 @@ async function route(request, method, path) {
       FROM tech_unlocks
       GROUP BY node_id
     `;
+    // Patent holders with names (for exclusivity display)
+    const patentRows = await sql`
+      SELECT tu.node_id, p.username AS owner_name, p.player_role AS owner_role
+      FROM tech_unlocks tu
+      JOIN players p ON p.id = tu.player_id
+      WHERE tu.status = 'PATENT'
+      ORDER BY tu.unlocked_at_turn ASC
+    `;
+    // Build nodeId → array of patent holders
+    const patentHoldersMap = {};
+    for (const r of patentRows) {
+      if (!patentHoldersMap[r.node_id]) patentHoldersMap[r.node_id] = [];
+      patentHoldersMap[r.node_id].push({ name: r.owner_name, role: r.owner_role });
+    }
+
     const myMap = Object.fromEntries(myUnlocks.map(u => [u.node_id, u]));
     const allMap = Object.fromEntries(allUnlocks.map(u => [u.node_id, u]));
     const turn = await getCurrentTurn();
@@ -219,6 +242,8 @@ async function route(request, method, path) {
       else if (global && !isOpenSource) status = 'PATENTED_BY_OTHER';
       else if (isOpenSource) status = 'AVAILABLE_OS';
       else status = 'AVAILABLE';
+      // Patent holders: only show during exclusivity (not open source yet)
+      const patent_holders = (!isOpenSource && patentHoldersMap[n.id]) ? patentHoldersMap[n.id] : [];
       return {
         ...n,
         status,
@@ -226,6 +251,7 @@ async function route(request, method, path) {
         turns_to_open_source: turnsToOpenSource,
         global_holders: global?.holders || 0,
         queued_order_id: queuedMap[n.id] || null,
+        patent_holders,
       };
     });
     return json({ nodes: enriched, current_turn: turn });
@@ -498,6 +524,8 @@ async function route(request, method, path) {
     const body2 = await request.json();
     const { sabotage_type, target_player_id, target_corp_id } = body2;
     const attacker_id = body2.attacker_id || body2.player_id;
+    const turnNow = await getCurrentTurn();
+    if (turnNow <= 1) return err('🛑 El Rey Nissai aún no despertó — los sabotajes se habilitan desde el Turno 2', 403);
     const sab = NISSAI_CATALOG.find(s => s.id === sabotage_type);
     if (!sab) return err('Tipo de sabotaje inválido');
     if (sab.target === 'PLAYER' && !target_player_id) return err('Objetivo de jugador requerido');
@@ -686,6 +714,71 @@ async function route(request, method, path) {
       RETURNING id
     `;
     return json({ ok: true, id: newPred.id, message: `🔮 Predicción registrada: ${corp.name} irá ${direction} · ${bet} IC en juego · Resultado a medianoche.` });
+  }
+
+  // ══════════════════════════════════════════════════════
+  // LOBBY POLÍTICO — IC Sink
+  // ══════════════════════════════════════════════════════
+
+  // GET /api/lobby?player_id=X
+  if (p === 'lobby' && method === 'GET') {
+    const playerId = new URL(request.url).searchParams.get('player_id');
+    const turn = await getCurrentTurn();
+    const myLobbies = playerId ? await sql`
+      SELECT il.*, c.name AS corp_name
+      FROM ic_lobbies il
+      LEFT JOIN corporations c ON c.id = il.corp_id
+      WHERE il.player_id = ${playerId} AND il.turn_number = ${turn}
+      ORDER BY il.created_at DESC
+    ` : [];
+    const allLobbies = await sql`
+      SELECT il.id, il.lobby_type, il.ic_paid, il.turn_number, il.resolved,
+        p.username AS player_name, p.avatar_color,
+        c.name AS corp_name
+      FROM ic_lobbies il
+      JOIN players p ON p.id = il.player_id
+      LEFT JOIN corporations c ON c.id = il.corp_id
+      WHERE il.turn_number = ${turn}
+      ORDER BY il.created_at DESC
+    `;
+    const [player] = playerId ? await sql`SELECT intellectual_capital FROM players WHERE id = ${playerId}` : [null];
+    return json({ catalog: LOBBY_CATALOG, myLobbies, allLobbies, playerIc: Number(player?.intellectual_capital || 0), turn });
+  }
+
+  // POST /api/lobby
+  if (p === 'lobby' && method === 'POST') {
+    if (!isMarketOpen()) return err('⏰ El Lobby cierra a medianoche — volvé mañana', 403);
+    const { player_id, lobby_type, corp_id } = await request.json();
+    if (!player_id || !lobby_type) return err('Campos requeridos faltantes');
+    const lobbyDef = LOBBY_CATALOG.find(l => l.id === lobby_type);
+    if (!lobbyDef) return err('Tipo de lobby inválido');
+    if (lobbyDef.target === 'CORP' && !corp_id) return err('Corporación requerida para este tipo de lobby');
+    const [player] = await sql`SELECT intellectual_capital FROM players WHERE id = ${player_id}`;
+    if (!player) return err('Jugador no encontrado', 404);
+    if (Number(player.intellectual_capital) < lobbyDef.ic_cost) return err(`IC insuficiente — necesitás ${lobbyDef.ic_cost} IC`);
+    const turn = await getCurrentTurn();
+    // 1 lobby per type per player per turn
+    const [existing] = await sql`SELECT id FROM ic_lobbies WHERE player_id = ${player_id} AND lobby_type = ${lobby_type} AND turn_number = ${turn}`;
+    if (existing) return err('Ya colocaste este tipo de lobby este turno');
+    await sql`UPDATE players SET intellectual_capital = intellectual_capital - ${lobbyDef.ic_cost} WHERE id = ${player_id}`;
+    await sql`INSERT INTO transactions (turn_number, player_id, tx_type, amount, description) VALUES (${turn}, ${player_id}, 'IC_GAIN', 0, ${'🏛️ Lobby: ' + lobbyDef.name + ' (-' + lobbyDef.ic_cost + ' IC)'})`;
+    await sql`INSERT INTO ic_lobbies (player_id, corp_id, lobby_type, ic_paid, turn_number) VALUES (${player_id}, ${corp_id || null}, ${lobby_type}, ${lobbyDef.ic_cost}, ${turn})`;
+    return json({ ok: true, message: `${lobbyDef.emoji} ${lobbyDef.name} encolado — se ejecuta a medianoche. Todos lo verán.` });
+  }
+
+  // DELETE /api/lobby/:id — cancel pending lobby (no refund — committed)
+  if (p.startsWith('lobby/') && method === 'DELETE') {
+    const lobbyId = p.split('/')[1];
+    const body = await request.json().catch(() => ({}));
+    const turn = await getCurrentTurn();
+    const [lobby] = await sql`SELECT * FROM ic_lobbies WHERE id = ${lobbyId} AND resolved = FALSE AND turn_number = ${turn}`;
+    if (!lobby) return err('Lobby no encontrado o ya ejecutado', 404);
+    if (lobby.player_id !== body.player_id) return err('No autorizado', 403);
+    // 50% refund
+    const refund = Math.round(lobby.ic_paid * 0.5);
+    await sql`UPDATE players SET intellectual_capital = intellectual_capital + ${refund} WHERE id = ${lobby.player_id}`;
+    await sql`DELETE FROM ic_lobbies WHERE id = ${lobbyId}`;
+    return json({ ok: true, refunded_ic: refund });
   }
 
   return err('Ruta no encontrada: ' + p, 404);

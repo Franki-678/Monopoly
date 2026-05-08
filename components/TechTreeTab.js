@@ -266,7 +266,21 @@ function NodeCard({ node, branchMeta, ic, onUnlock, onCancel, loading, isLast, i
               <span className="text-orange-300/80">Open Source en {node.turns_to_open_source} t.</span>
             )}
             {node.status === 'PATENTED_BY_OTHER' && node.turns_to_open_source != null && (
-              <span className="text-red-300/80">Open en {node.turns_to_open_source} t.</span>
+              <>
+                {node.patent_holders?.map((h, i) => (
+                  <span key={i} className={`text-[9px] px-1.5 py-0.5 rounded-full border ${h.role === 'SYSTEMS_ENGINEER' ? 'border-yellow-500/40 text-yellow-300 bg-yellow-500/10' : 'border-red-500/40 text-red-300 bg-red-500/10'}`}>
+                    {h.role === 'SYSTEMS_ENGINEER' ? '⚙️ ' : '🔐 '}{h.name}
+                  </span>
+                ))}
+                <span className="text-red-300/80">Open en {node.turns_to_open_source} t.</span>
+              </>
+            )}
+            {node.status === 'PATENT' && !isPersonal && node.patent_holders?.length > 0 && (
+              node.patent_holders.map((h, i) => (
+                <span key={i} className="text-[9px] px-1.5 py-0.5 rounded-full border border-orange-500/30 text-orange-300 bg-orange-500/10">
+                  🔐 {h.name}
+                </span>
+              ))
             )}
             {!isFog && node.effect_label && node.effect_label !== '???' && (
               <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${branchMeta.accentBorder} ${branchMeta.accentText} opacity-70`}>
