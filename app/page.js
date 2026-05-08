@@ -29,6 +29,13 @@ import SurvivalGuide from '@/components/SurvivalGuide';
 import CorpDetailModal, { corpScore } from '@/components/CorpDetailModal';
 
 // ── Utilidades ────────────────────────────────────────────────────────────────
+// ── Market Hours (ART = UTC-3, no DST) ───────────────────────────────────────
+function clientIsMarketOpen() {
+  const now = new Date();
+  const artHour = ((now.getUTCHours() - 3) + 24) % 24;
+  return artHour >= 9;
+}
+
 const fmt    = (n) => { if (n === null || n === undefined || isNaN(n)) return '$0'; const num = Number(n); const sign = num < 0 ? '-' : ''; return sign + '$' + Math.abs(num).toLocaleString('es-AR', { maximumFractionDigits: 0 }); };
 const fmtDec = (n) => { if (n === null || n === undefined || isNaN(n)) return '$0'; return '$' + Number(n).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
 
@@ -89,7 +96,16 @@ function App() {
   const [flash,           setFlash]           = useState(null);
   const [projectedSquare, setProjectedSquare] = useState(null);
   const [clickedSquare,   setClickedSquare]   = useState(null);
+  const [marketOpen,      setMarketOpen]      = useState(true);
   const prevTurnRef = useRef(null);
+
+  // Market hours check — update every minute
+  useEffect(() => {
+    const check = () => setMarketOpen(clientIsMarketOpen());
+    check();
+    const id = setInterval(check, 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -215,6 +231,7 @@ function App() {
         logout={logout}
         clickedCorp={clickedCorp}
         onCloseCorp={() => setClickedSquare(null)}
+        marketOpen={marketOpen}
       />
       <SurvivalGuide />
     </LiveBoard>
@@ -396,7 +413,7 @@ function ChangePinScreen({ player, onSuccess, onLogout }) {
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
-function Dashboard({ player, dashboard, market, players, state, refresh, logout, loading, setLoading, onOpenDice, projectedSquare, clickedCorp, onCloseCorp }) {
+function Dashboard({ player, dashboard, market, players, state, refresh, logout, loading, setLoading, onOpenDice, projectedSquare, clickedCorp, onCloseCorp, marketOpen }) {
   const [section,    setSection]    = useState('inicio');
   const [mercadoTab, setMercadoTab] = useState('market');
   const [arenaTab,   setArenaTab]   = useState('nissai');
@@ -405,7 +422,7 @@ function Dashboard({ player, dashboard, market, players, state, refresh, logout,
     return <div className="h-full flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-lime-400" /></div>;
   }
 
-  const { player: pData, turn, netWorth, portfolio, audit, pendingOrders, auditTurn, lastGlobalEvent } = dashboard;
+  const { player: pData, turn, netWorth, portfolio, audit, pendingOrders, auditTurn, lastGlobalEvent, turnSummary } = dashboard;
 
   const resolveTurn = async () => {
     if (!confirm(`¿Resolver turno ${turn}? Esto es irreversible.`)) return;
@@ -499,6 +516,18 @@ function Dashboard({ player, dashboard, market, players, state, refresh, logout,
             );
           })()}
 
+          {/* Market Closed Banner */}
+          {!marketOpen && (
+            <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} className="bg-zinc-900/80 border border-zinc-600/50 rounded-xl px-3 py-2 flex items-center gap-2.5">
+              <span className="text-xl shrink-0">🌙</span>
+              <div className="flex-1 min-w-0">
+                <div className="font-black text-zinc-300 text-xs uppercase tracking-wider">Mercado Cerrado</div>
+                <div className="text-[10px] font-mono text-zinc-500 mt-0.5">09:00 – 00:00 ART · Consultas disponibles · Órdenes bloqueadas hasta mañana</div>
+              </div>
+              <div className="text-[9px] font-mono text-zinc-600 shrink-0 text-right">READ<br/>ONLY</div>
+            </motion.div>
+          )}
+
           {/* Chapter 11 */}
           {pData.bankrupt && (
             <div className="bg-red-950/40 border border-red-500/50 rounded-lg p-3 flex items-start gap-2">
@@ -525,6 +554,8 @@ function Dashboard({ player, dashboard, market, players, state, refresh, logout,
               audit={audit}
               pendingOrders={pendingOrders}
               pData={pData}
+              turnSummary={turnSummary}
+              netWorth={netWorth}
             />
           )}
           {section === 'mercado' && (
@@ -548,6 +579,7 @@ function Dashboard({ player, dashboard, market, players, state, refresh, logout,
               market={market}
               pData={pData}
               refresh={refresh}
+              marketOpen={marketOpen}
             />
           )}
           {section === 'pactos' && (
@@ -634,78 +666,190 @@ function BottomNav({ section, setSection }) {
   );
 }
 
-// ── Sección Inicio — Pulso del Mercado ────────────────────────────────────────
-function InicioSection({ dashboard, market, player, turn, refresh, auditTurn, lastGlobalEvent, portfolio, audit, pendingOrders, pData }) {
+// ── Sección Inicio — Dashboard & Gossip ──────────────────────────────────────
+function InicioSection({ dashboard, market, player, turn, refresh, auditTurn, lastGlobalEvent, portfolio, audit, pendingOrders, pData, turnSummary, netWorth }) {
 
-  // Compute estimated cashflow from portfolio
   const incMult  = 1 + 0.01 * Math.pow(Math.max(1, turn), 1.15);
   const costMult = Math.pow(1.02, Math.max(0, turn - 1));
-  let totalDiv = 0, totalMaint = 0;
-  for (const h of portfolio) {
-    const corp = market.find(c => c.id === h.corp_id);
-    if (!corp) continue;
-    const myPct = h.shares / (corp.total_shares || 100);
-    totalDiv   += Number(corp.base_income || 0) * incMult * myPct;
-    totalMaint += (myPct * Number(corp.fair_market_value)) * 0.015 * costMult;
-  }
+
+  // Per-corp breakdown
+  const corpBreakdown = portfolio.map(h => {
+    const corp   = market.find(c => c.id === h.corp_id);
+    if (!corp) return null;
+    const myPct  = h.shares / (corp.total_shares || 100);
+    const value  = myPct * Number(corp.fair_market_value);
+    const div    = Number(corp.base_income || 0) * incMult * myPct;
+    const maint  = myPct * Number(corp.fair_market_value) * 0.015 * costMult;
+    const net    = div - maint;
+    const isCeo  = corp.ceo_player_id === player.id;
+    return { ...h, corpName: corp.name, value, div, maint, net, isCeo };
+  }).filter(Boolean);
+
+  const totalDiv    = corpBreakdown.reduce((s, c) => s + c.div, 0);
+  const totalMaint  = corpBreakdown.reduce((s, c) => s + c.maint, 0);
   const netCashflow = totalDiv - totalMaint;
 
-  // Top picks: corps with score ≥ 4, available supply > 0, not owned by player
+  // Starting net worth = portfolio value + cash (approx, since NW from server includes both)
+  const cashValue   = Number(pData.liquid_cash);
+  const portfolioValue = corpBreakdown.reduce((s, c) => s + c.value, 0);
+  // Rough PnL vs initial 5000 cash
+  const INITIAL_CAPITAL = 5000;
+  const totalNW = netWorth || (cashValue + portfolioValue);
+  const pnl = totalNW - INITIAL_CAPITAL;
+  const isWinning = pnl >= 0;
+
+  const danger = corpBreakdown.filter(h => h.net < 0);
+
+  // Top picks
   const scoredMarket = market.map(c => ({ ...c, score: corpScore(c, turn) }));
   const topPicks = scoredMarket
     .filter(c => c.score >= 4 && ((c.total_shares || 100) - (c.owned_shares || 0)) > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, 3);
 
-  // Holdings bleeding cash
-  const danger = portfolio.filter(h => {
-    const corp = market.find(c => c.id === h.corp_id);
-    if (!corp) return false;
-    const myPct      = h.shares / (corp.total_shares || 100);
-    const div        = Number(corp.base_income || 0) * incMult * myPct;
-    const maint      = myPct * Number(corp.fair_market_value) * 0.015 * costMult;
-    return (div - maint) < 0;
-  }).map(h => {
-    const corp   = market.find(c => c.id === h.corp_id);
-    const myPct  = h.shares / (corp.total_shares || 100);
-    const net    = Number(corp.base_income || 0) * incMult * myPct - myPct * Number(corp.fair_market_value) * 0.015 * costMult;
-    return { ...h, corpName: corp?.name, net };
-  });
-
   const [auditOpen, setAuditOpen] = useState(false);
+  const [gossipSection, setGossipSection] = useState('mercado');
+
+  // Build gossip events from turnSummary
+  const gossipSections = turnSummary ? [
+    {
+      id: 'mercado', label: '💰 Mercado',
+      items: (() => {
+        const trades = turnSummary.trades || [];
+        // group by type+corp
+        const grouped = {};
+        for (const t of trades) {
+          const k = t.type + ':' + t.corp;
+          if (!grouped[k]) grouped[k] = { ...t, qty: 0 };
+          grouped[k].qty += t.qty;
+        }
+        return Object.values(grouped).map(t => ({
+          icon: t.type === 'BUY' ? '📈' : '📉',
+          text: `${t.qty} acciones de ${t.corp} — ${t.type === 'BUY' ? 'Compra' : 'Venta'}`,
+          cls: t.type === 'BUY' ? 'text-lime-400' : 'text-red-400',
+        }));
+      })(),
+    },
+    {
+      id: 'eventos', label: '⚡ Eventos',
+      items: (() => {
+        const ev = turnSummary.events || [];
+        const lines = [];
+        if (turnSummary.globalEvent) lines.push({ icon: '🌐', text: turnSummary.globalEvent.label + ' — ' + (turnSummary.globalEvent.desc || ''), cls: 'text-indigo-300' });
+        for (const e of ev) {
+          if (e.type === 'CHAPTER_11') lines.push({ icon: '💀', text: `${e.username} cayó en Chapter 11`, cls: 'text-red-400' });
+          if (e.type === 'ALLIANCE_BROKEN') lines.push({ icon: '💔', text: `Alianza rota (acción hostil en ${e.corp})`, cls: 'text-orange-400' });
+          if (e.type === 'PATENT_EXPIRED') lines.push({ icon: '🔓', text: `Patente ${e.node_id} caducó → Open Source`, cls: 'text-cyan-400' });
+          if (e.type === 'TRANSIT_RENT') lines.push({ icon: '🚶', text: `${e.username} aterrizó en ${e.corp} — alquiler ${fmt(e.rent)}`, cls: 'text-zinc-400' });
+        }
+        return lines;
+      })(),
+    },
+    {
+      id: 'nissai', label: '🥷 Nissai',
+      items: (turnSummary.nissaiResults || []).map(r => {
+        if (r.type === 'AUDIT') return { icon: '🕵️', text: `${r.target} auditado — -$${r.amount?.toFixed(0)}`, cls: 'text-yellow-400' };
+        if (r.type === 'HACK')  return { icon: '💻', text: `${r.target} hackeado — ${r.amount?.toFixed(0)} IC robado`, cls: 'text-cyan-400' };
+        if (r.type === 'BLACKOUT') return { icon: '⚡', text: `Corte de Luz: ${r.corp} — divs anulados`, cls: 'text-orange-400' };
+        if (r.type === 'RUMOR')    return { icon: '📰', text: `Rumor: ${r.corp} cayó -10% FMV`, cls: 'text-pink-400' };
+        if (r.type === 'FISCO')    return { icon: '📋', text: `${r.target} perdió exenciones fiscales`, cls: 'text-red-400' };
+        return { icon: '🥷', text: JSON.stringify(r), cls: 'text-zinc-500' };
+      }),
+    },
+    {
+      id: 'casino', label: '🎰 Casino',
+      items: (turnSummary.casinoResults || []).map(r => ({
+        icon: r.result === 'JACKPOT' ? '🎰' : r.result === 'WIN' ? '💰' : r.result === 'SMALL' ? '✨' : '💀',
+        text: `${r.player} — ${r.label} · apostó ${fmt(r.betAmount)} → ${r.payout > 0 ? '+' + fmt(r.payout) : 'perdió todo'}`,
+        cls: r.payout > r.betAmount ? 'text-lime-400' : r.payout > 0 ? 'text-yellow-400' : 'text-red-400',
+      })),
+    },
+    {
+      id: 'oraculo', label: '🔮 Oráculo',
+      items: (turnSummary.oracleResults || []).map(r => ({
+        icon: r.result === 'WIN' ? '🏆' : r.result === 'TIE' ? '🤝' : '💸',
+        text: `${r.player} · ${r.corp} ${r.direction} · ${r.result} — ${r.payoutIc > 0 ? '+' + r.payoutIc + ' IC' : r.result === 'LOSS' ? '-' + r.icBet + ' IC' : 'reembolso'}`,
+        cls: r.result === 'WIN' ? 'text-lime-400' : r.result === 'TIE' ? 'text-cyan-400' : 'text-red-400',
+      })),
+    },
+    {
+      id: 'tech', label: '⚗️ Tech',
+      items: (turnSummary.techResults || []).map(r => ({
+        icon: r.type === 'TECH_UNLOCKED' ? (r.status === 'PATENT' ? '🔐' : '🌐') : '❌',
+        text: r.type === 'TECH_UNLOCKED'
+          ? `${r.player} desbloqueó ${r.node} (${r.status === 'PATENT' ? 'Patente' : 'Open Source'})`
+          : r.type === 'TECH_CONFLICT'
+          ? `${r.player} perdió WEGO a ${r.winner} por ${r.node}`
+          : `${r.player} rechazado: ${r.node}`,
+        cls: r.type === 'TECH_UNLOCKED' ? (r.status === 'PATENT' ? 'text-orange-300' : 'text-cyan-300') : 'text-red-400',
+      })),
+    },
+  ] : [];
+
+  const activeGossip = gossipSections.find(s => s.id === gossipSection);
 
   return (
     <div className="space-y-2">
-      {/* Global Event */}
-      {lastGlobalEvent && (
-        <div className="bg-indigo-950/40 border border-indigo-500/40 rounded-xl p-3 flex items-start gap-3">
-          <span className="text-2xl shrink-0 leading-none mt-0.5">🌐</span>
-          <div className="min-w-0">
-            <div className="font-black text-indigo-300 text-xs uppercase tracking-wider">{lastGlobalEvent.label}</div>
-            <div className="text-[11px] text-indigo-400/80 mt-0.5">{lastGlobalEvent.desc}</div>
-            {lastGlobalEvent.district && (
-              <div className="text-[10px] font-mono text-indigo-500 mt-1">
-                Zona: <span className="text-indigo-300 font-bold">{lastGlobalEvent.district}</span> · {lastGlobalEvent.pct > 0 ? '+' : ''}{(lastGlobalEvent.pct * 100).toFixed(0)}% FMV
-              </div>
-            )}
+      {/* PnL Hero Card */}
+      <div className={`border rounded-xl p-3 ${isWinning ? 'bg-gradient-to-r from-lime-950/40 to-black border-lime-600/40' : 'bg-gradient-to-r from-red-950/40 to-black border-red-600/40'}`}>
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <div className="text-[8px] font-mono uppercase text-zinc-500 tracking-widest mb-0.5">Net Worth total</div>
+            <div className={`text-2xl font-black font-mono ${isWinning ? 'text-lime-400' : 'text-red-400'}`}>{fmt(Math.round(totalNW))}</div>
+          </div>
+          <div className="text-right">
+            <div className={`text-lg font-black font-mono ${isWinning ? 'text-lime-300' : 'text-red-300'}`}>
+              {pnl >= 0 ? '+' : ''}{fmt(Math.round(pnl))}
+            </div>
+            <div className="text-[9px] font-mono text-zinc-600">vs capital inicial</div>
           </div>
         </div>
-      )}
+        <div className="grid grid-cols-3 gap-2 text-[9px] font-mono">
+          <div className="bg-zinc-900/60 rounded px-2 py-1 text-center">
+            <div className="text-zinc-500 mb-0.5">Cash</div>
+            <div className="text-cyan-400 font-bold">{fmt(Math.round(cashValue))}</div>
+          </div>
+          <div className="bg-zinc-900/60 rounded px-2 py-1 text-center">
+            <div className="text-zinc-500 mb-0.5">Portfolio</div>
+            <div className="text-lime-400 font-bold">{fmt(Math.round(portfolioValue))}</div>
+          </div>
+          <div className={`rounded px-2 py-1 text-center ${netCashflow >= 0 ? 'bg-lime-900/20' : 'bg-red-900/20'}`}>
+            <div className="text-zinc-500 mb-0.5">Flujo/T</div>
+            <div className={`font-bold ${netCashflow >= 0 ? 'text-lime-400' : 'text-red-400'}`}>{netCashflow >= 0 ? '+' : ''}{fmt(Math.round(netCashflow))}</div>
+          </div>
+        </div>
+      </div>
 
-      {/* Cashflow Bar */}
-      {portfolio.length > 0 && (
-        <div className={`border rounded-xl p-3 ${netCashflow >= 0 ? 'bg-lime-950/30 border-lime-700/40' : 'bg-red-950/30 border-red-700/40'}`}>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-[9px] font-mono uppercase text-zinc-500">Cashflow estimado / turno</span>
-            <span className={`font-black text-base font-mono ${netCashflow >= 0 ? 'text-lime-400' : 'text-red-400'}`}>
-              {netCashflow >= 0 ? '+' : ''}{fmt(Math.round(netCashflow))}
-            </span>
-          </div>
-          <div className="flex gap-3 text-[9px] font-mono">
-            <span className="text-lime-500">▲ Div: {fmt(Math.round(totalDiv))}</span>
-            <span className="text-red-500">▼ Mnt: {fmt(Math.round(totalMaint))}</span>
-          </div>
-        </div>
+      {/* Corp-by-corp breakdown */}
+      {corpBreakdown.length > 0 && (
+        <Card className="bg-zinc-950 border-zinc-900">
+          <CardHeader className="py-2 px-3">
+            <CardTitle className="text-lime-400 font-mono uppercase text-xs flex items-center gap-1.5">
+              <Building2 className="h-3.5 w-3.5" /> Portfolio — {corpBreakdown.length} corps
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-3 pb-3 space-y-1.5">
+            {corpBreakdown.map(h => (
+              <div key={h.corp_id} className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 border ${h.net >= 0 ? 'border-zinc-800 bg-zinc-900/40' : 'border-red-900/30 bg-red-950/10'}`}>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-white truncate">{h.corpName}</span>
+                    {h.isCeo && <Crown className="h-3 w-3 text-orange-400 shrink-0" />}
+                    <span className="text-[9px] font-mono text-zinc-600">{h.shares}sh</span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-0.5 text-[9px] font-mono">
+                    <span className="text-lime-600">▲{fmt(Math.round(h.div))}</span>
+                    <span className="text-red-600">▼{fmt(Math.round(h.maint))}</span>
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className={`font-mono text-xs font-bold ${h.net >= 0 ? 'text-lime-400' : 'text-red-400'}`}>{h.net >= 0 ? '+' : ''}{fmt(Math.round(h.net))}/t</div>
+                  <div className="text-[9px] font-mono text-zinc-500">{fmt(Math.round(h.value))}</div>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
       )}
 
       {/* Top Picks */}
@@ -765,14 +909,57 @@ function InicioSection({ dashboard, market, player, turn, refresh, auditTurn, la
         </Card>
       )}
 
-      {/* Audit (collapsible) */}
+      {/* Gossip Feed — turn summary */}
+      {gossipSections.length > 0 && (
+        <Card className="bg-zinc-950 border-zinc-900">
+          <CardHeader className="py-2 px-3">
+            <CardTitle className="text-lime-400 font-mono uppercase text-xs flex items-center gap-1.5">
+              <History className="h-3.5 w-3.5" /> Turno #{auditTurn} — Gossip Feed
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-3 pb-3">
+            {/* Section pills */}
+            <div className="flex gap-1 flex-wrap mb-2">
+              {gossipSections.map(s => {
+                const count = s.items.length;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => setGossipSection(s.id)}
+                    className={`px-2 py-0.5 text-[8px] font-mono uppercase rounded border transition-colors ${gossipSection === s.id ? 'bg-lime-400/20 border-lime-500/40 text-lime-300 font-bold' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}
+                  >
+                    {s.label} {count > 0 && <span className="ml-0.5 opacity-70">({count})</span>}
+                  </button>
+                );
+              })}
+            </div>
+            {/* Items */}
+            {activeGossip && (
+              <div className="space-y-1 max-h-40 overflow-y-auto">
+                {activeGossip.items.length === 0 ? (
+                  <p className="text-[10px] text-zinc-600 italic text-center py-2">Sin actividad en esta categoría.</p>
+                ) : (
+                  activeGossip.items.map((item, i) => (
+                    <div key={i} className="flex items-start gap-1.5 py-0.5 border-b border-zinc-900/60">
+                      <span className="text-sm shrink-0 leading-none mt-0.5">{item.icon}</span>
+                      <span className={`text-[10px] ${item.cls || 'text-zinc-400'}`}>{item.text}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Personal Audit (collapsible) */}
       <Card className="bg-zinc-950 border-zinc-900">
         <button
           onClick={() => setAuditOpen(o => !o)}
           className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-zinc-900/40 transition-colors"
         >
-          <span className="text-lime-400 font-mono uppercase text-xs flex items-center gap-1.5">
-            <History className="h-3.5 w-3.5" /> Auditoría — Turno #{auditTurn || '—'}
+          <span className="text-zinc-400 font-mono uppercase text-xs flex items-center gap-1.5">
+            <History className="h-3.5 w-3.5" /> Mi Auditoría — Turno #{auditTurn || '—'}
           </span>
           {auditOpen ? <ChevronDown className="h-4 w-4 text-zinc-500" /> : <ChevronRight className="h-4 w-4 text-zinc-500" />}
         </button>
@@ -1209,12 +1396,174 @@ function PortfolioSection({ portfolio, market, player, turn, refresh }) {
   );
 }
 
-// ── Arena Section (Nissai / Casino / Bounty) ──────────────────────────────────
-function ArenaSection({ tab, setTab, player, players, market, pData, refresh }) {
+// ── Oráculo del Mercado Tab ───────────────────────────────────────────────────
+function OracleTab({ player, market, ic, marketOpen, onChange }) {
+  const [predictions, setPredictions] = useState([]);
+  const [loading,     setLoading]     = useState(true);
+  const [submitting,  setSubmitting]  = useState(false);
+  const [selectedCorp, setSelectedCorp] = useState('');
+  const [direction, setDirection] = useState('UP');
+  const [icBet, setIcBet] = useState('');
+
+  const load = async () => {
+    try {
+      const d = await api('predictions');
+      setPredictions(d.predictions || []);
+    } catch (e) { toast.error(e.message); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const submit = async () => {
+    if (!selectedCorp || !icBet) return toast.error('Seleccioná corp e IC a apostar');
+    const bet = parseInt(icBet, 10);
+    if (bet < 50 || bet > 1000) return toast.error('Mínimo 50 IC, máximo 1000 IC');
+    if (bet > ic) return toast.error('IC insuficiente');
+    setSubmitting(true);
+    try {
+      const res = await api('predictions', {
+        method: 'POST',
+        body: JSON.stringify({ player_id: player.id, corp_id: selectedCorp, ic_bet: bet, direction }),
+      });
+      toast.success(res.message || '🔮 Predicción registrada');
+      setSelectedCorp(''); setIcBet('');
+      await load();
+      onChange?.();
+    } catch (e) { toast.error(e.message); } finally { setSubmitting(false); }
+  };
+
+  const myPreds = predictions.filter(p => p.player_id === player.id);
+  const otherPreds = predictions.filter(p => p.player_id !== player.id);
+
+  return (
+    <div className="space-y-3">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-indigo-950/60 to-black border border-indigo-700/40 rounded-xl p-3 flex items-start gap-3">
+        <span className="text-3xl shrink-0">🔮</span>
+        <div>
+          <div className="font-black text-indigo-300 uppercase tracking-widest text-sm">Oráculo del Mercado</div>
+          <div className="text-[10px] font-mono text-indigo-500 mt-0.5">Apostá IC a la dirección del FMV · Win: ×2.2 · Tie (&lt;0.5%): reembolso · Loss: IC perdido</div>
+        </div>
+      </div>
+
+      {/* Bet Form */}
+      {marketOpen ? (
+        <Card className="bg-zinc-950 border-zinc-900">
+          <CardHeader className="py-2 px-3">
+            <CardTitle className="text-indigo-400 font-mono uppercase text-xs">Nueva Predicción</CardTitle>
+            <CardDescription className="text-zinc-500 text-[10px]">1 predicción por corp por turno · Todas son públicas</CardDescription>
+          </CardHeader>
+          <CardContent className="px-3 pb-3 space-y-2">
+            <div>
+              <Label className="text-zinc-400 font-mono text-[9px] uppercase">Corporación</Label>
+              <select
+                value={selectedCorp}
+                onChange={e => setSelectedCorp(e.target.value)}
+                className="w-full bg-black border border-zinc-800 text-white text-xs font-mono rounded-lg px-2 h-8 mt-0.5"
+              >
+                <option value="">Seleccioná corp...</option>
+                {market.filter(c => !myPreds.some(p => p.corp_id === c.id)).map(c => (
+                  <option key={c.id} value={c.id}>{c.name} — {fmt(Number(c.fair_market_value))}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <Label className="text-zinc-400 font-mono text-[9px] uppercase">Dirección</Label>
+                <div className="flex gap-1 mt-0.5">
+                  {['UP','DOWN'].map(d => (
+                    <button
+                      key={d}
+                      onClick={() => setDirection(d)}
+                      className={`flex-1 py-1.5 text-[10px] font-mono font-bold rounded border transition-colors ${
+                        direction === d
+                          ? d === 'UP' ? 'bg-lime-500/20 border-lime-500/50 text-lime-300' : 'bg-red-500/20 border-red-500/50 text-red-300'
+                          : 'border-zinc-800 text-zinc-500'
+                      }`}
+                    >
+                      {d === 'UP' ? '📈 SUBE' : '📉 BAJA'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex-1">
+                <Label className="text-zinc-400 font-mono text-[9px] uppercase">IC (50-1000)</Label>
+                <Input
+                  type="number" min="50" max={Math.min(1000, ic)}
+                  value={icBet} onChange={e => setIcBet(e.target.value)}
+                  placeholder="IC"
+                  className="bg-black border-zinc-800 text-white font-mono h-8 text-xs mt-0.5"
+                />
+              </div>
+            </div>
+            <Button
+              onClick={submit}
+              disabled={submitting || !selectedCorp || !icBet}
+              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold uppercase tracking-wider text-xs h-9"
+            >
+              {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : '🔮 Registrar Predicción'}
+            </Button>
+            <p className="text-[9px] font-mono text-zinc-600 text-center">IC disponible: {Math.round(ic).toLocaleString('es-AR')}</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="bg-zinc-900/50 border border-zinc-700/40 rounded-xl p-3 text-center text-zinc-500 text-xs font-mono">🌙 Oráculo cerrado — abre a las 09:00 ART</div>
+      )}
+
+      {/* My predictions */}
+      {myPreds.length > 0 && (
+        <Card className="bg-zinc-950 border-zinc-900">
+          <CardHeader className="py-1.5 px-3">
+            <CardTitle className="text-indigo-300 font-mono uppercase text-xs">Mis predicciones</CardTitle>
+          </CardHeader>
+          <CardContent className="px-3 pb-3 space-y-1.5">
+            {myPreds.map(p => (
+              <div key={p.id} className={`flex items-center gap-2 p-2 rounded border ${p.direction === 'UP' ? 'border-lime-700/30 bg-lime-950/10' : 'border-red-700/30 bg-red-950/10'}`}>
+                <span className="text-sm">{p.direction === 'UP' ? '📈' : '📉'}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-bold text-white truncate">{p.corp_name}</div>
+                  <div className="text-[9px] font-mono text-zinc-500">{p.ic_bet} IC · {p.direction}</div>
+                </div>
+                <div className={`text-[9px] font-mono font-bold ${p.direction === 'UP' ? 'text-lime-400' : 'text-red-400'}`}>{p.direction}</div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Public oracle board */}
+      {otherPreds.length > 0 && (
+        <Card className="bg-zinc-950 border-zinc-900">
+          <CardHeader className="py-1.5 px-3">
+            <CardTitle className="text-zinc-400 font-mono uppercase text-xs">📡 Predicciones públicas</CardTitle>
+            <CardDescription className="text-zinc-600 text-[10px]">Todos pueden ver — creá meta-estrategias</CardDescription>
+          </CardHeader>
+          <CardContent className="px-3 pb-3 space-y-1">
+            {otherPreds.map(p => (
+              <div key={p.id} className="flex items-center gap-2 py-1 border-b border-zinc-900">
+                <div className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-black text-black shrink-0" style={{ backgroundColor: p.avatar_color || '#a3e635' }}>{(p.player_name || '?')[0]}</div>
+                <span className="text-[10px] text-zinc-400 flex-1 truncate"><span className="text-white font-bold">{p.player_name}</span> · {p.corp_name}</span>
+                <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border ${p.direction === 'UP' ? 'border-lime-500/30 text-lime-400 bg-lime-500/10' : 'border-red-500/30 text-red-400 bg-red-500/10'}`}>{p.direction}</span>
+                <span className="text-[9px] font-mono text-zinc-500 shrink-0">{p.ic_bet} IC</span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {loading && <div className="text-zinc-600 text-xs text-center py-4">Cargando...</div>}
+    </div>
+  );
+}
+
+// ── Arena Section (Nissai / Casino / Bounty / Oráculo) ────────────────────────
+function ArenaSection({ tab, setTab, player, players, market, pData, refresh, marketOpen }) {
   const TABS = [
     { id: 'nissai', label: '🥷 Nissai', activeClass: 'bg-red-700/30 text-red-300 border-red-700/40' },
     { id: 'casino', label: '🎰 Casino', activeClass: 'bg-purple-700/30 text-purple-300 border-purple-700/40' },
     { id: 'bounty', label: '🏴‍☠️ Bounty', activeClass: 'bg-amber-700/30 text-amber-300 border-amber-700/40' },
+    { id: 'oraculo', label: '🔮 Oráculo', activeClass: 'bg-indigo-700/30 text-indigo-300 border-indigo-700/40' },
   ];
   const active = TABS.find(t => t.id === tab);
 
@@ -1261,6 +1610,15 @@ function ArenaSection({ tab, setTab, player, players, market, pData, refresh }) 
           </div>
           <BountyBoard player={player} players={players} liquidCash={Number(pData.liquid_cash)} onChange={refresh} />
         </div>
+      )}
+      {tab === 'oraculo' && (
+        <OracleTab
+          player={player}
+          market={market}
+          ic={Number(pData.intellectual_capital)}
+          marketOpen={marketOpen}
+          onChange={refresh}
+        />
       )}
     </div>
   );

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import sql from '@/lib/db';
 import { createSchema, seedIfEmpty } from '@/lib/schema';
-import { resolveTurn, getCurrentTurn, computeNetWorth, CONFIG, checkAndAwardAchievement, NISSAI_CATALOG } from '@/lib/gameLogic';
+import { resolveTurn, getCurrentTurn, computeNetWorth, CONFIG, checkAndAwardAchievement, NISSAI_CATALOG, isMarketOpen } from '@/lib/gameLogic';
 
 const json = (data, status = 200) => NextResponse.json(data, { status });
 const err = (message, status = 400) => NextResponse.json({ error: message }, { status });
@@ -19,7 +19,7 @@ async function route(request, method, path) {
   if (p === 'reset' && method === 'POST') {
     const body = await request.json().catch(() => ({}));
     if (body.secret !== process.env.ADMIN_SECRET) return err('Secret inválido', 403);
-    await sql`DROP TABLE IF EXISTS tech_unlocks, tech_nodes, alliances, daily_rolls, turn_log, transactions, orders, shareholdings, corporations, bounty_contracts, casino_bets, nissai_orders, global_achievements, game_state, players CASCADE`;
+    await sql`DROP TABLE IF EXISTS tech_orders, ic_predictions, tech_unlocks, tech_nodes, alliances, daily_rolls, turn_log, transactions, orders, shareholdings, corporations, bounty_contracts, casino_bets, nissai_orders, global_achievements, game_state, players CASCADE`;
     await createSchema();
     const seed = await seedIfEmpty();
     return json({ ok: true, reset: true, seed });
@@ -89,11 +89,15 @@ async function route(request, method, path) {
       ORDER BY o.created_at DESC
     `;
 
-    // Last global event (from last resolved turn)
+    // Last turn full summary (for gossip feed + global event)
     let lastGlobalEvent = null;
+    let turnSummary = null;
     if (auditTurn > 0) {
       const [logRow] = await sql`SELECT summary FROM turn_log WHERE turn_number = ${auditTurn}`;
-      if (logRow?.summary?.globalEvent) lastGlobalEvent = logRow.summary.globalEvent;
+      if (logRow?.summary) {
+        turnSummary = logRow.summary;
+        lastGlobalEvent = logRow.summary.globalEvent || null;
+      }
     }
 
     return json({
@@ -105,6 +109,7 @@ async function route(request, method, path) {
       pendingOrders,
       auditTurn,
       lastGlobalEvent,
+      turnSummary,
     });
   }
 
@@ -135,6 +140,7 @@ async function route(request, method, path) {
 
   // --- ORDERS ---
   if (p === 'orders' && method === 'POST') {
+    if (!isMarketOpen()) return err('⏰ Mercado cerrado — abre a las 09:00 ART y cierra a medianoche', 403);
     const body = await request.json();
     const { player_id, order_type, corporation_id, shares, limit_price } = body;
     if (!player_id || !order_type || !corporation_id || !shares) return err('Campos requeridos faltantes');
@@ -194,31 +200,67 @@ async function route(request, method, path) {
     const allMap = Object.fromEntries(allUnlocks.map(u => [u.node_id, u]));
     const turn = await getCurrentTurn();
 
+    // Queued orders for current turn
+    const myQueued = await sql`SELECT node_id, id AS order_id FROM tech_orders WHERE player_id = ${playerId} AND turn_number = ${turn} AND status = 'PENDING'`;
+    const queuedMap = Object.fromEntries(myQueued.map(q => [q.node_id, q.order_id]));
+
     const enriched = nodes.map(n => {
       const mine = myMap[n.id];
       const global = allMap[n.id];
+      const isQueued = queuedMap[n.id] != null;
       const prereqMet = !n.prereq_id || (myMap[n.prereq_id] != null);
       const isOpenSource = global?.is_open_source || false;
       const turnsToOpenSource = global ? Math.max(0, 10 - (turn - global.first_unlocked_turn)) : null;
       const effectiveCost = mine ? 0 : (isOpenSource ? Math.round(n.base_cost * 0.25) : n.base_cost);
       let status;
-      if (mine) status = mine.status; // PATENT or OPEN_SOURCE for me
+      if (mine) status = mine.status;
+      else if (isQueued) status = 'QUEUED';
       else if (!prereqMet) status = 'LOCKED';
-      else if (global && !isOpenSource) status = 'PATENTED_BY_OTHER'; // someone else has patent
+      else if (global && !isOpenSource) status = 'PATENTED_BY_OTHER';
       else if (isOpenSource) status = 'AVAILABLE_OS';
-      else status = 'AVAILABLE'; // first to unlock = patent
+      else status = 'AVAILABLE';
       return {
         ...n,
         status,
         effective_cost: effectiveCost,
         turns_to_open_source: turnsToOpenSource,
         global_holders: global?.holders || 0,
+        queued_order_id: queuedMap[n.id] || null,
       };
     });
     return json({ nodes: enriched, current_turn: turn });
   }
 
+  // GET /api/tech/orders/:playerId — player's pending tech queue this turn
+  if (p.startsWith('tech/orders/') && method === 'GET') {
+    const playerId = p.split('/')[2];
+    const turn = await getCurrentTurn();
+    const orders = await sql`
+      SELECT tord.*, tn.name AS node_name, tn.branch, tn.tier
+      FROM tech_orders tord
+      JOIN tech_nodes tn ON tn.id = tord.node_id
+      WHERE tord.player_id = ${playerId} AND tord.turn_number = ${turn} AND tord.status = 'PENDING'
+      ORDER BY tord.created_at ASC
+    `;
+    return json({ orders, turn });
+  }
+
+  // DELETE /api/tech/orders/:orderId — cancel pending tech order (refund IC)
+  if (p.startsWith('tech/orders/') && method === 'DELETE') {
+    const orderId = p.split('/')[2];
+    const body = await request.json().catch(() => ({}));
+    const turn = await getCurrentTurn();
+    const [order] = await sql`SELECT * FROM tech_orders WHERE id = ${orderId} AND status = 'PENDING' AND turn_number = ${turn}`;
+    if (!order) return err('Orden no encontrada o ya ejecutada', 404);
+    if (order.player_id !== body.player_id) return err('No autorizado', 403);
+    await sql`UPDATE players SET intellectual_capital = intellectual_capital + ${order.ic_paid} WHERE id = ${order.player_id}`;
+    await sql`UPDATE tech_orders SET status = 'CANCELLED' WHERE id = ${orderId}`;
+    return json({ ok: true, refunded_ic: order.ic_paid });
+  }
+
+  // POST /api/tech/unlock — enqueue tech order (WEGO: IC deducted now, resolved at midnight)
   if (p === 'tech/unlock' && method === 'POST') {
+    if (!isMarketOpen()) return err('⏰ Mercado cerrado — el Lab cierra a medianoche', 403);
     const { player_id, node_id } = await request.json();
     if (!player_id || !node_id) return err('Faltan campos');
     const [node] = await sql`SELECT * FROM tech_nodes WHERE id = ${node_id}`;
@@ -230,45 +272,42 @@ async function route(request, method, path) {
       if (!prereq) return err('Prerequisito no cumplido');
     }
     const [player] = await sql`SELECT intellectual_capital, player_role FROM players WHERE id = ${player_id}`;
-    const isBen = player.player_role === 'SYSTEMS_ENGINEER';
-    const isEconomist = player.player_role === 'ECONOMIST';
-
-    // Check global status: if any player has PATENT (not OS), block (unless BEN — bypasses patents).
-    const [globalState] = await sql`
-      SELECT
-        BOOL_OR(status = 'PATENT') AS has_patent,
-        BOOL_OR(status = 'OPEN_SOURCE') AS is_os
-      FROM tech_unlocks WHERE node_id = ${node_id}
-    `;
-    if (!isBen && globalState?.has_patent && !globalState?.is_os) {
-      return err('Patente exclusiva de otro jugador. Esperá a que se vuelva Open Source.');
-    }
-    // BEN always enters at OPEN_SOURCE (pays full base cost, skips patent queue)
-    const isOpenSource = isBen ? true : (globalState?.is_os || false);
-    let cost = isOpenSource ? Math.round(node.base_cost * 0.25) : node.base_cost;
-    if (isBen && !globalState?.is_os) cost = node.base_cost; // full cost for BEN patent bypass
-    if (isEconomist) cost = Math.round(cost * 1.20); // ECONOMIST pays +20% (bureaucracy tax)
 
     // Check required_role for personal branch nodes
     if (node.required_role && node.required_role !== player.player_role) {
       return err('Este nodo es exclusivo para el rol ' + node.required_role);
     }
 
-    if (Number(player.intellectual_capital) < cost) return err('IC insuficiente: necesitás ' + cost + ', tenés ' + Math.floor(player.intellectual_capital));
-    const turn = await getCurrentTurn();
-    // Personal branch nodes are always PATENT (never expire)
-    const isPersonalNode = node_id.match(/^(ds|ec|ps|se|me)-/);
-    const newStatus = (isPersonalNode || !isOpenSource) ? 'PATENT' : 'OPEN_SOURCE';
-    await sql`UPDATE players SET intellectual_capital = intellectual_capital - ${cost}, total_ic_spent = COALESCE(total_ic_spent, 0) + ${cost} WHERE id = ${player_id}`;
-    await sql`INSERT INTO tech_unlocks (player_id, node_id, unlocked_at_turn, cost_paid, status) VALUES (${player_id}, ${node_id}, ${turn}, ${cost}, ${newStatus})`;
-    await sql`INSERT INTO transactions (turn_number, player_id, tx_type, amount, description) VALUES (${turn}, ${player_id}, 'TECH_UNLOCK', 0, ${'Desbloqueado: ' + node.name + ' (' + (newStatus === 'PATENT' ? 'Patente ' : 'Open Source ') + cost + ' IC)'})`;
+    const isBen = player.player_role === 'SYSTEMS_ENGINEER';
+    const isEconomist = player.player_role === 'ECONOMIST';
 
-    // Award tier2_tech achievement to first player to unlock a tier-2 (or higher) node
-    if (node.tier >= 2) {
-      await checkAndAwardAchievement('tier2_tech', player_id, turn);
+    // Determine cost upfront (same logic as before)
+    const [globalState] = await sql`
+      SELECT BOOL_OR(status = 'PATENT') AS has_patent, BOOL_OR(status = 'OPEN_SOURCE') AS is_os
+      FROM tech_unlocks WHERE node_id = ${node_id}
+    `;
+    if (!isBen && globalState?.has_patent && !globalState?.is_os) {
+      return err('Patente exclusiva de otro jugador. Esperá a que se vuelva Open Source.');
     }
+    const isOpenSource = isBen ? true : (globalState?.is_os || false);
+    let cost = isOpenSource ? Math.round(node.base_cost * 0.25) : node.base_cost;
+    if (isBen && !globalState?.is_os) cost = node.base_cost;
+    if (isEconomist) cost = Math.round(cost * 1.20);
 
-    return json({ ok: true, status: newStatus, cost });
+    if (Number(player.intellectual_capital) < cost) return err('IC insuficiente: necesitás ' + cost + ', tenés ' + Math.floor(player.intellectual_capital));
+
+    const turn = await getCurrentTurn();
+
+    // Check duplicate pending order
+    const [pendingOrder] = await sql`SELECT id FROM tech_orders WHERE player_id = ${player_id} AND node_id = ${node_id} AND turn_number = ${turn} AND status = 'PENDING'`;
+    if (pendingOrder) return err('Ya tenés este nodo encolado para este turno');
+
+    // Deduct IC immediately
+    await sql`UPDATE players SET intellectual_capital = intellectual_capital - ${cost} WHERE id = ${player_id}`;
+    await sql`INSERT INTO transactions (turn_number, player_id, tx_type, amount, description) VALUES (${turn}, ${player_id}, 'TECH_UNLOCK', 0, ${'⏳ Tech encolado: ' + node.name + ' (-' + cost + ' IC, resolución a medianoche)'})`;
+    await sql`INSERT INTO tech_orders (player_id, node_id, turn_number, ic_paid) VALUES (${player_id}, ${node_id}, ${turn}, ${cost})`;
+
+    return json({ ok: true, status: 'QUEUED', cost, message: '⏳ Nodo encolado — se resuelve a medianoche (WEGO). IC reservado.' });
   }
 
   // --- ALLIANCES ---
@@ -455,7 +494,10 @@ async function route(request, method, path) {
 
   // POST /api/nissai — place sabotage order
   if (p === 'nissai' && method === 'POST') {
-    const { attacker_id, sabotage_type, target_player_id, target_corp_id } = await request.json();
+    if (!isMarketOpen()) return err('⏰ El Rey Nissai duerme — el mercado negro abre a las 09:00 ART', 403);
+    const body2 = await request.json();
+    const { sabotage_type, target_player_id, target_corp_id } = body2;
+    const attacker_id = body2.attacker_id || body2.player_id;
     const sab = NISSAI_CATALOG.find(s => s.id === sabotage_type);
     if (!sab) return err('Tipo de sabotaje inválido');
     if (sab.target === 'PLAYER' && !target_player_id) return err('Objetivo de jugador requerido');
@@ -512,6 +554,7 @@ async function route(request, method, path) {
 
   // POST /api/casino — place bet
   if (p === 'casino' && method === 'POST') {
+    if (!isMarketOpen()) return err('⏰ Casino cerrado — abre a las 09:00 ART', 403);
     const { player_id, bet_amount } = await request.json();
     if (!player_id || !bet_amount) return err('Campos requeridos faltantes');
     const [player] = await sql`SELECT liquid_cash FROM players WHERE id = ${player_id}`;
@@ -558,6 +601,7 @@ async function route(request, method, path) {
 
   // POST /api/bounty — place bounty
   if (p === 'bounty' && method === 'POST') {
+    if (!isMarketOpen()) return err('⏰ Mercado cerrado — los bounties se colocan de 09:00 a medianoche ART', 403);
     const { poster_id, target_id, reward_cash } = await request.json();
     if (!poster_id || !target_id || !reward_cash) return err('Campos requeridos faltantes');
     if (poster_id === target_id) return err('No podés ponerte un bounty a vos mismo');
@@ -593,6 +637,55 @@ async function route(request, method, path) {
     await sql`INSERT INTO transactions (turn_number, player_id, tx_type, amount, description) VALUES (${turn}, ${bounty.poster_id}, 'SERVER_MAINTENANCE', ${refund}, ${'🏴‍☠️ Bounty cancelado (reembolso 50%: +$' + refund.toFixed(0) + ')'})`;
     await sql`UPDATE bounty_contracts SET status = 'CANCELLED' WHERE id = ${bountyId}`;
     return json({ ok: true, refund });
+  }
+
+  // ══════════════════════════════════════════════════════
+  // ORÁCULO DEL MERCADO — IC Predictions
+  // ══════════════════════════════════════════════════════
+
+  // GET /api/predictions?player_id=X — all public predictions for current turn
+  if (p === 'predictions' && method === 'GET') {
+    const turn = await getCurrentTurn();
+    const rows = await sql`
+      SELECT ip.id, ip.player_id, ip.corp_id, ip.turn_number, ip.ic_bet, ip.direction,
+        ip.fmv_at_bet, ip.resolved, ip.won, ip.payout_ic, ip.created_at,
+        p.username AS player_name, p.avatar_color,
+        c.name AS corp_name, c.fair_market_value AS current_fmv
+      FROM ic_predictions ip
+      JOIN players p ON p.id = ip.player_id
+      JOIN corporations c ON c.id = ip.corp_id
+      WHERE ip.turn_number = ${turn}
+      ORDER BY ip.created_at DESC
+    `;
+    return json({ predictions: rows, turn });
+  }
+
+  // POST /api/predictions — place IC prediction
+  if (p === 'predictions' && method === 'POST') {
+    if (!isMarketOpen()) return err('⏰ El Oráculo cierra a medianoche — vuelve mañana', 403);
+    const { player_id, corp_id, ic_bet, direction } = await request.json();
+    if (!player_id || !corp_id || !ic_bet || !direction) return err('Campos requeridos faltantes');
+    if (!['UP', 'DOWN'].includes(direction)) return err('Dirección debe ser UP o DOWN');
+    const bet = parseInt(ic_bet, 10);
+    if (bet < 50)    return err('Apuesta mínima: 50 IC');
+    if (bet > 1000)  return err('Apuesta máxima: 1000 IC');
+    const [player] = await sql`SELECT intellectual_capital FROM players WHERE id = ${player_id}`;
+    if (!player) return err('Jugador no encontrado', 404);
+    if (Number(player.intellectual_capital) < bet) return err('IC insuficiente: necesitás ' + bet + ' IC');
+    const [corp] = await sql`SELECT id, fair_market_value, name FROM corporations WHERE id = ${corp_id}`;
+    if (!corp) return err('Corporación no encontrada', 404);
+    const turn = await getCurrentTurn();
+    const [existingPred] = await sql`SELECT id FROM ic_predictions WHERE player_id = ${player_id} AND corp_id = ${corp_id} AND turn_number = ${turn}`;
+    if (existingPred) return err('Ya hiciste una predicción para esta corp este turno');
+    // Deduct IC immediately
+    await sql`UPDATE players SET intellectual_capital = intellectual_capital - ${bet} WHERE id = ${player_id}`;
+    await sql`INSERT INTO transactions (turn_number, player_id, tx_type, amount, description) VALUES (${turn}, ${player_id}, 'IC_GAIN', 0, ${'🔮 Oráculo: ' + corp.name + ' ' + direction + ' (-' + bet + ' IC apostado)'})`;
+    const [newPred] = await sql`
+      INSERT INTO ic_predictions (player_id, corp_id, turn_number, ic_bet, direction, fmv_at_bet)
+      VALUES (${player_id}, ${corp_id}, ${turn}, ${bet}, ${direction}, ${Number(corp.fair_market_value)})
+      RETURNING id
+    `;
+    return json({ ok: true, id: newPred.id, message: `🔮 Predicción registrada: ${corp.name} irá ${direction} · ${bet} IC en juego · Resultado a medianoche.` });
   }
 
   return err('Ruta no encontrada: ' + p, 404);

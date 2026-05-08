@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Lock, Unlock, Crown, GitBranch, Zap, ShieldCheck, TrendingUp, Truck, User, EyeOff } from 'lucide-react';
+import { Lock, Unlock, Crown, GitBranch, Zap, ShieldCheck, TrendingUp, Truck, User, EyeOff, Clock, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 const api = async (path, opts = {}) => {
@@ -68,12 +68,23 @@ export default function TechTreeTab({ player, ic, onChange }) {
   };
   useEffect(() => { load(); }, [player.id]);
 
-  const unlock = async (nodeId) => {
-    if (!confirm('¿Desbloquear este nodo?')) return;
+  const queue = async (nodeId) => {
+    if (!confirm('¿Encolar este nodo? El IC se reserva ahora y se resuelve a medianoche.')) return;
     setLoading(true);
     try {
       const res = await api('tech/unlock', { method: 'POST', body: JSON.stringify({ player_id: player.id, node_id: nodeId }) });
-      toast.success(res.status === 'PATENT' ? '🔐 Patente adquirida' : '🌐 Open Source desbloqueado');
+      toast.success(res.status === 'QUEUED' ? '⏳ Encolado — se resuelve a medianoche' : res.status === 'PATENT' ? '🔐 Patente adquirida' : '🌐 Open Source desbloqueado');
+      await load();
+      onChange?.();
+    } catch (e) { toast.error(e.message); } finally { setLoading(false); }
+  };
+
+  const cancelQueue = async (orderId) => {
+    if (!confirm('¿Cancelar y recuperar el IC?')) return;
+    setLoading(true);
+    try {
+      await api('tech/orders/' + orderId, { method: 'DELETE', body: JSON.stringify({ player_id: player.id }) });
+      toast.success('✅ Orden cancelada — IC reembolsado');
       await load();
       onChange?.();
     } catch (e) { toast.error(e.message); } finally { setLoading(false); }
@@ -129,7 +140,8 @@ export default function TechTreeTab({ player, ic, onChange }) {
         tree={tree}
         meta={BRANCH_META[branch]}
         ic={ic}
-        onUnlock={unlock}
+        onUnlock={queue}
+        onCancel={cancelQueue}
         loading={loading}
         myRole={myRole}
         personalPrefix={personalPrefix}
@@ -138,7 +150,7 @@ export default function TechTreeTab({ player, ic, onChange }) {
   );
 }
 
-function BranchPanel({ branch, tree, meta, ic, onUnlock, loading, myRole, personalPrefix }) {
+function BranchPanel({ branch, tree, meta, ic, onUnlock, onCancel, loading, myRole, personalPrefix }) {
   let nodes;
 
   if (branch === 'PERSONAL') {
@@ -171,6 +183,7 @@ function BranchPanel({ branch, tree, meta, ic, onUnlock, loading, myRole, person
             branchMeta={meta}
             ic={ic}
             onUnlock={() => onUnlock(n.id)}
+            onCancel={n.queued_order_id ? () => onCancel(n.queued_order_id) : null}
             loading={loading}
             isLast={i === nodes.length - 1}
             isPersonal={branch === 'PERSONAL'}
@@ -184,10 +197,11 @@ function BranchPanel({ branch, tree, meta, ic, onUnlock, loading, myRole, person
   );
 }
 
-function NodeCard({ node, branchMeta, ic, onUnlock, loading, isLast, isPersonal }) {
+function NodeCard({ node, branchMeta, ic, onUnlock, onCancel, loading, isLast, isPersonal }) {
   const canAfford = ic >= node.effective_cost;
   const isMine     = node.status === 'PATENT' || node.status === 'OPEN_SOURCE';
   const isLocked   = node.status === 'LOCKED';
+  const isQueued   = node.status === 'QUEUED';
   const blockedByOther = node.status === 'PATENTED_BY_OTHER';
   const isAvailable = node.status === 'AVAILABLE' || node.status === 'AVAILABLE_OS';
 
@@ -195,12 +209,13 @@ function NodeCard({ node, branchMeta, ic, onUnlock, loading, isLast, isPersonal 
   const isFog = node.tier >= 6 && !isMine;
 
   const statusBadge = {
-    PATENT: { label: isPersonal ? '🔐 Tu Patente ∞' : 'Tu Patente', cls: 'bg-orange-500/30 text-orange-200', Icon: Crown },
-    OPEN_SOURCE: { label: 'Open Source', cls: 'bg-cyan-500/30 text-cyan-200', Icon: GitBranch },
-    LOCKED: { label: 'Bloqueado', cls: 'bg-zinc-800 text-zinc-500', Icon: Lock },
-    PATENTED_BY_OTHER: { label: 'Patente ajena', cls: 'bg-red-500/20 text-red-300', Icon: Lock },
-    AVAILABLE: { label: 'Disponible', cls: 'bg-lime-500/20 text-lime-300', Icon: Unlock },
-    AVAILABLE_OS: { label: 'Open Source 25%', cls: 'bg-cyan-500/20 text-cyan-300', Icon: GitBranch },
+    PATENT:            { label: isPersonal ? '🔐 Tu Patente ∞' : 'Tu Patente',  cls: 'bg-orange-500/30 text-orange-200', Icon: Crown    },
+    OPEN_SOURCE:       { label: 'Open Source',                                   cls: 'bg-cyan-500/30 text-cyan-200',     Icon: GitBranch },
+    LOCKED:            { label: 'Bloqueado',                                     cls: 'bg-zinc-800 text-zinc-500',        Icon: Lock      },
+    QUEUED:            { label: '⏳ Encolado',                                   cls: 'bg-yellow-500/25 text-yellow-200', Icon: Clock     },
+    PATENTED_BY_OTHER: { label: 'Patente ajena',                                 cls: 'bg-red-500/20 text-red-300',       Icon: Lock      },
+    AVAILABLE:         { label: 'Disponible',                                    cls: 'bg-lime-500/20 text-lime-300',     Icon: Unlock    },
+    AVAILABLE_OS:      { label: 'Open Source 25%',                               cls: 'bg-cyan-500/20 text-cyan-300',     Icon: GitBranch },
   }[node.status];
   const SBI = statusBadge?.Icon || Lock;
 
@@ -211,6 +226,7 @@ function NodeCard({ node, branchMeta, ic, onUnlock, loading, isLast, isPersonal 
       animate={{ opacity: 1, y: 0 }}
       className={`relative bg-zinc-900/40 border rounded-lg p-3 ${
         isMine ? branchMeta.accentBorder + ' ' + branchMeta.accentBg
+               : isQueued ? 'border-yellow-500/40 bg-yellow-500/5'
                : isLocked || blockedByOther ? 'border-zinc-800 opacity-60'
                : 'border-zinc-800'
       }`}
@@ -268,8 +284,21 @@ function NodeCard({ node, branchMeta, ic, onUnlock, loading, isLast, isPersonal 
               disabled={loading || !canAfford}
               className={`h-7 text-[11px] px-3 font-bold uppercase ${canAfford ? 'bg-opacity-90 hover:opacity-90 text-black ' + branchMeta.stripe : 'bg-zinc-800 text-zinc-500'}`}
             >
-              {canAfford ? 'Desbloquear' : 'Sin IC'}
+              {canAfford ? 'Encolar' : 'Sin IC'}
             </Button>
+          )}
+          {isQueued && onCancel && (
+            <button
+              onClick={onCancel}
+              disabled={loading}
+              className="flex items-center gap-1 h-7 px-2 rounded border border-yellow-500/40 text-yellow-300 text-[10px] font-mono hover:bg-yellow-500/10 transition-colors"
+              title="Cancelar y recuperar IC"
+            >
+              <X className="h-3 w-3" /> Cancelar
+            </button>
+          )}
+          {isQueued && (
+            <span className="text-[10px] text-yellow-400/80 italic font-mono">⏳ Resolución a medianoche</span>
           )}
           {blockedByOther && (
             <span className="text-[10px] text-red-400/80 italic">Esperá Open Source</span>

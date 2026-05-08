@@ -45,9 +45,9 @@ export default function NissaiPanel({ player, players, market, onChange }) {
   useEffect(() => { load(); }, [load]);
 
   const catalog    = data?.catalog    || [];
-  const queued     = data?.queuedOrders || [];
-  const ic         = Number(data?.player?.intellectual_capital || 0);
-  const cash       = Number(data?.player?.liquid_cash || 0);
+  const queued     = data?.orders     || [];
+  const ic         = Number(data?.playerIc   || 0);
+  const cash       = Number(data?.playerCash || 0);
   const selectedOp = catalog.find(c => c.id === selected);
   const meta       = selected ? TYPE_META[selected] : null;
 
@@ -125,7 +125,7 @@ export default function NissaiPanel({ player, players, market, onChange }) {
               return (
                 <motion.button
                   key={op.id}
-                  onClick={() => { setSelected(isActive ? null : op.id); setTargetPid(''); setTargetCid(''); }}
+                  onClick={() => { if (!afford) return; setSelected(isActive ? null : op.id); setTargetPid(''); setTargetCid(''); }}
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.97 }}
                   style={{ willChange: 'transform' }}
